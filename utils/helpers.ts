@@ -1,0 +1,120 @@
+import { ProjectData } from '../types';
+
+export const generateId = (length: number = 10): string => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
+export const formatDate = (isoString: string): string => {
+  return new Date(isoString).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+export const formatDateForFilename = (date: Date): string => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}_${hh}${min}`;
+};
+
+export const sanitizeFilename = (name: string): string => {
+  return name.replace(/[\\/:*?"<>|]/g, '_').trim();
+};
+
+export const saveFile = async (content: string, filename: string, contentType: string): Promise<boolean> => {
+  // Try File System Access API
+  if ('showSaveFilePicker' in window) {
+    try {
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: filename,
+        types: [{
+          description: contentType.includes('json') ? 'JSON File' : 'Markdown File',
+          accept: { [contentType]: ['.' + filename.split('.').pop()] },
+        }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      return true;
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+          return false; // User cancelled
+      }
+      console.error('File save failed:', err);
+      // Fallback to legacy download if arbitrary error occurs
+    }
+  }
+  
+  // Legacy Fallback
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  return true;
+};
+
+export const downloadJson = async (data: object, filename: string): Promise<boolean> => {
+  return saveFile(JSON.stringify(data, null, 2), filename, 'application/json');
+};
+
+export const downloadMarkdown = async (data: ProjectData, filename: string): Promise<boolean> => {
+  // Use project name as H1
+  let md = `# ${data.projectName || 'Flow Export'}\n\n`;
+  
+  // 1. Outline Overview
+  md += `## Outline\n\n`;
+  const statusIcons: Record<string, string> = {
+      waiting: '○', inProgress: '▶', completed: '✓', onHold: '−'
+  };
+  
+  data.nodes.forEach(node => {
+      const indent = '  '.repeat(node.depth);
+      md += `${indent}- ${statusIcons[node.status]} **${node.text || 'Untitled'}**\n`;
+      if (node.desc) {
+          md += `${indent}  *${node.desc}*\n`;
+      }
+  });
+
+  // 2. Separator
+  md += `\n---\n\n`;
+
+  // 3. Global Root Info
+  md += `## Global Context (Root)\n\n`;
+  const rootContent = data.contentMap['root'];
+  if (rootContent) {
+      md += `${rootContent}\n`;
+  } else {
+      md += `(No global context recorded)\n`;
+  }
+
+  // 4. Separator
+  md += `\n---\n\n`;
+
+  // 5. Node Details
+  md += `## Details\n\n`;
+  data.nodes.forEach(node => {
+      const content = data.contentMap[node.id];
+      if (content && content.trim()) {
+          md += `\n`;
+          md += content; 
+          md += `\n\n---\n`;
+      }
+  });
+
+  return saveFile(md, filename, 'text/markdown');
+};

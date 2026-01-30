@@ -1,0 +1,5 @@
+{
+  "name": "Flow",
+  "description": "A lightweight, target-driven research logging tool featuring a dual-pane layout for logical planning (outline tree) and deep recording (markdown editor). Features local storage, export capabilities, and productivity visualization.",
+  "requestFramePermissions": []
+}
