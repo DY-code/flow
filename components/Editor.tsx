@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useId, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useId, useCallback, useMemo } from 'react';
 import Markdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { useStore } from '../context/Store';
@@ -35,12 +35,17 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
   // File Input for Import
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // Debounce Timer Ref
-  const updateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Debounce Timer Refs
+  const updateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Full Content Save (Slow)
+  const titleFastUpdateRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Meta Update (Fast)
+  const descFastUpdateRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Meta Update (Fast)
 
   // Unique ID for textarea to allow direct DOM manipulation for Import
   const uniqueId = useId();
   const textareaId = `editor-area-${uniqueId}`;
+  const selectionRef = useRef<{ start: number; end: number } | null>(null);
+  const shouldRestoreSelectionRef = useRef(false);
+  const skipSelectionCaptureRef = useRef(false);
 
   // Content Source
   const contentKey = isRoot ? 'root' : nodeId!;
@@ -66,15 +71,85 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
     return lines.slice(2).join('\n');
   });
 
-  // Keep refs for title/desc to avoid stale closures in debounced callbacks
+  // Keep refs for title/desc/body to avoid stale closures in debounced callbacks
   const titleRef = useRef(title);
   const descRef = useRef(desc);
+  const bodyRef = useRef(body);
 
   useEffect(() => { titleRef.current = title; }, [title]);
   useEffect(() => { descRef.current = desc; }, [desc]);
+  useEffect(() => { bodyRef.current = body; }, [body]);
 
   // Track editing state for Title and Desc
   const [editingField, setEditingField] = useState<'title' | 'desc' | null>(null);
+
+  // --- SYNC LOGIC ---
+  // Refs to track the LAST KNOWN external values to avoid overwriting local work with stale data
+  const lastExternalTitleRef = useRef<string | null>(null);
+  const lastExternalDescRef = useRef<string | null>(null);
+  const lastExternalBodyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let incomingTitle = '';
+    let incomingDesc = '';
+    let incomingBody = '';
+
+    // PARSE INCOMING PROPS
+    if (isRoot) {
+        // In Root mode, the Editor manages the WHOLE raw content as 'body'.
+        incomingBody = rawContent;
+        
+        // We can still try to parse title/desc for the header state, although unused visually in Root mode editor
+        const lines = rawContent.split('\n');
+        incomingTitle = (lines[0] || '').replace(/^#+\s*/, '');
+        incomingDesc = (lines[1] || '').replace(/^>\s*/, '');
+    } else if (node) {
+        // In Node mode, we rely on `node` object for meta, and sliced rawContent for body
+        incomingTitle = node.text;
+        incomingDesc = node.desc;
+        
+        const lines = rawContent.split('\n');
+        incomingBody = lines.slice(2).join('\n');
+    }
+
+    // 1. Title
+    // Only update if external source CHANGED from what we last saw
+    // This prevents re-setting state when we are the ones who triggered the update (which might be "stale" relative to local state)
+    if (incomingTitle !== lastExternalTitleRef.current) {
+        lastExternalTitleRef.current = incomingTitle;
+        if (editingField !== 'title' && incomingTitle !== titleRef.current) {
+            setTitle(incomingTitle);
+        }
+    }
+
+    // 2. Desc
+    if (incomingDesc !== lastExternalDescRef.current) {
+        lastExternalDescRef.current = incomingDesc;
+        if (editingField !== 'desc' && incomingDesc !== descRef.current) {
+            setDesc(incomingDesc);
+        }
+    }
+
+    // 3. Body
+    if (incomingBody !== lastExternalBodyRef.current) {
+        lastExternalBodyRef.current = incomingBody;
+        if (incomingBody !== bodyRef.current) {
+            setBody(incomingBody);
+        }
+    }
+    
+    // Initialize refs on first run if null (prevents unnecessary mismatch on first render)
+    if (lastExternalTitleRef.current === null) lastExternalTitleRef.current = incomingTitle;
+    if (lastExternalDescRef.current === null) lastExternalDescRef.current = incomingDesc;
+    if (lastExternalBodyRef.current === null) lastExternalBodyRef.current = incomingBody;
+
+  }, [isRoot, node, rawContent, editingField]);
+
+  // Reset selection tracking when switching to a different content source
+  useEffect(() => {
+    selectionRef.current = null;
+    shouldRestoreSelectionRef.current = false;
+  }, [contentKey]);
 
   // Input refs
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -86,12 +161,12 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
     if (editingField === 'desc' && descInputRef.current) descInputRef.current.focus();
   }, [editingField]);
 
-  // Clean up timeout on unmount
+  // Clean up timeouts on unmount
   useEffect(() => {
     return () => {
-        if (updateTimeoutRef.current) {
-            clearTimeout(updateTimeoutRef.current);
-        }
+        if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
+        if (titleFastUpdateRef.current) clearTimeout(titleFastUpdateRef.current);
+        if (descFastUpdateRef.current) clearTimeout(descFastUpdateRef.current);
     };
   }, []);
 
@@ -104,6 +179,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
       
       dispatch({ type: 'UPDATE_CONTENT', payload: { id: contentKey, content: newFullContent } });
 
+      // We also update meta here to ensure consistency, though fast track might have already done it
       if (!isRoot && nodeId) {
           dispatch({ 
               type: 'UPDATE_NODE_META', 
@@ -112,20 +188,77 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
       }
   }, [contentKey, isRoot, nodeId, dispatch]);
 
+  // Real-time Title Change Handler
+  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      const val = e.target.value;
+      setTitle(val);
+
+      // 1. Fast Track: Update Outline/Breadcrumbs quickly (100ms)
+      if (titleFastUpdateRef.current) clearTimeout(titleFastUpdateRef.current);
+      titleFastUpdateRef.current = setTimeout(() => {
+           if (!isRoot && nodeId) {
+               dispatch({ type: 'UPDATE_NODE_META', payload: { id: nodeId, text: val } });
+           }
+           titleFastUpdateRef.current = null;
+      }, 100);
+
+      // 2. Slow Track: Update Full Content / Storage (700ms)
+      if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
+      updateTimeoutRef.current = setTimeout(() => {
+          updateContent(val, descRef.current, bodyRef.current);
+          updateTimeoutRef.current = null;
+      }, 700);
+  }, [isRoot, nodeId, dispatch, updateContent]);
+
+  // Real-time Description Change Handler
+  const handleDescChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      const val = e.target.value;
+      setDesc(val);
+
+      // 1. Fast Track
+      if (descFastUpdateRef.current) clearTimeout(descFastUpdateRef.current);
+      descFastUpdateRef.current = setTimeout(() => {
+           if (!isRoot && nodeId) {
+               dispatch({ type: 'UPDATE_NODE_META', payload: { id: nodeId, desc: val } });
+           }
+           descFastUpdateRef.current = null;
+      }, 100);
+
+      // 2. Slow Track
+      if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
+      updateTimeoutRef.current = setTimeout(() => {
+          updateContent(titleRef.current, val, bodyRef.current);
+          updateTimeoutRef.current = null;
+      }, 700);
+  }, [isRoot, nodeId, dispatch, updateContent]);
+
+
+  // Commit handlers (Enter/Blur) - Force immediate update
   const handleTitleCommit = useCallback(() => {
       setEditingField(null);
+      // Clear pending timeouts to avoid overwriting the immediate commit
+      if (titleFastUpdateRef.current) clearTimeout(titleFastUpdateRef.current);
       if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
+      
       updateContent(title, desc, body);
   }, [title, desc, body, updateContent]);
 
   const handleDescCommit = useCallback(() => {
       setEditingField(null);
+      if (descFastUpdateRef.current) clearTimeout(descFastUpdateRef.current);
       if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
+
       updateContent(title, desc, body);
   }, [title, desc, body, updateContent]);
 
   // Debounced Body Change
   const handleBodyChange = useCallback((val: string) => {
+      const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
+      if (textarea && !skipSelectionCaptureRef.current) {
+          selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
+          shouldRestoreSelectionRef.current = true;
+      }
+      skipSelectionCaptureRef.current = false;
       setBody(val);
       
       if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
@@ -139,6 +272,12 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
 
   // Debounced Raw Change (for Root)
   const handleRawChange = useCallback((val: string) => {
+      const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
+      if (textarea && !skipSelectionCaptureRef.current) {
+          selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
+          shouldRestoreSelectionRef.current = true;
+      }
+      skipSelectionCaptureRef.current = false;
       setBody(val);
       
       if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
@@ -148,6 +287,28 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           updateTimeoutRef.current = null;
       }, 700);
   }, [contentKey, dispatch]);
+
+  const restoreSelection = useCallback(() => {
+      if (!shouldRestoreSelectionRef.current) return;
+      const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
+      if (!textarea) return;
+      const sel = selectionRef.current;
+      if (!sel) return;
+      const len = textarea.value.length;
+      const start = Math.min(sel.start, len);
+      const end = Math.min(sel.end, len);
+      textarea.selectionStart = start;
+      textarea.selectionEnd = end;
+      shouldRestoreSelectionRef.current = false;
+  }, [textareaId]);
+
+  // Restore selection after controlled updates (fix Ctrl+Z cursor jump)
+  useLayoutEffect(() => {
+      restoreSelection();
+      if (!shouldRestoreSelectionRef.current) return;
+      const raf = requestAnimationFrame(() => restoreSelection());
+      return () => cancelAnimationFrame(raf);
+  }, [body, restoreSelection]);
 
   // Save immediately on blur
   const handleEditorBlur = useCallback(() => {
@@ -165,11 +326,22 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
   // --- NODE IMPORT / EXPORT HANDLERS ---
   
   const handleNodeExport = () => {
-    if (!node) return;
-    const name = node.text || 'Untitled';
-    const date = new Date(node.lastModified);
-    const filename = `${sanitizeFilename(name)}_${formatDateForFilename(date)}.md`;
-    saveFile(rawContent, filename, 'text/markdown');
+    // Support export for both Node and Root
+    const contentToExport = isRoot ? rawContent : rawContent;
+    
+    // For Root, we don't have a 'node' object, so we construct a filename
+    let filename = 'untitled.md';
+    if (isRoot) {
+        filename = `Global_Context_${formatDateForFilename(new Date())}.md`;
+    } else if (node) {
+        const name = node.text || 'Untitled';
+        const date = new Date(node.lastModified);
+        filename = `${sanitizeFilename(name)}_${formatDateForFilename(date)}.md`;
+    } else {
+        return; 
+    }
+
+    saveFile(contentToExport, filename, 'text/markdown');
   };
 
   const handleNodeImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -181,14 +353,15 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
       const text = event.target?.result as string;
       if (text) {
           // Check if current node is empty
+          // In Root mode, title is empty string, so we check body (rawContent)
           const isNodeEmpty = !title.trim() && !body.trim();
 
           // 1. Handle Title (Programmatic State Update is fine for Title)
-          if (isNodeEmpty) {
+          // Only for Node mode do we auto-set title from filename if empty
+          if (!isRoot && isNodeEmpty) {
               const newTitle = file.name.replace(/\.[^/.]+$/, "");
               setTitle(newTitle);
-              // Immediately sync meta for title, body will follow via onChange
-              if (!isRoot && nodeId) {
+              if (nodeId) {
                   dispatch({ 
                       type: 'UPDATE_NODE_META', 
                       payload: { id: nodeId, text: newTitle, desc: descRef.current } 
@@ -197,8 +370,6 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           }
 
           // 2. Handle Body via execCommand to preserve Undo History
-          // We bypass React state setting here and use the DOM to simulate user input.
-          // This ensures the browser's undo stack captures the "Import" as an action.
           const textarea = document.getElementById(textareaId) as HTMLTextAreaElement;
           
           if (textarea) {
@@ -224,17 +395,20 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                 }
 
                 // Execute Insert
-                // Deprecated but the only reliable way to manipulate undo stack for textareas programmatically
                 const success = document.execCommand('insertText', false, insertText);
                 
                 if (!success) {
-                    // Fallback to standard react state update if execCommand fails
+                    // Fallback
                     const newBody = isNodeEmpty ? text : (body + '\n\n' + text);
                     setBody(newBody);
-                    updateContent(title, desc, newBody);
+                    
+                    // Critical Fix: For Root mode, use dispatch directly to avoid prepending # and > 
+                    if (isRoot) {
+                         dispatch({ type: 'UPDATE_CONTENT', payload: { id: contentKey, content: newBody } });
+                    } else {
+                         updateContent(title, desc, newBody);
+                    }
                 }
-                // Note: If successful, execCommand triggers the standard `onChange` event of the textarea,
-                // which calls `handleBodyChange`. Our debounce logic handles the Store update naturally.
           }
       }
     };
@@ -321,8 +495,17 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
     // e.target is the textarea in simple-code-editor.
     const textarea = e.target as HTMLTextAreaElement;
     if (textarea.tagName !== 'TEXTAREA') return;
+
+    const key = e.key.toLowerCase();
+    const isUndo = key === 'z' && !e.shiftKey && !e.altKey;
+    const isRedo = (key === 'z' && e.shiftKey) || key === 'y';
+    if (isUndo || isRedo) {
+        selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
+        shouldRestoreSelectionRef.current = true;
+        skipSelectionCaptureRef.current = true;
+    }
     
-    switch(e.key.toLowerCase()) {
+    switch(key) {
         case 'b':
             e.preventDefault();
             insertFormat(textarea, '**', '**', 'bold');
@@ -428,7 +611,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                                 ref={titleInputRef}
                                 type="text"
                                 value={title}
-                                onChange={(e) => setTitle(e.target.value)}
+                                onChange={handleTitleChange}
                                 onBlur={handleTitleCommit}
                                 onKeyDown={(e) => e.key === 'Enter' && handleTitleCommit()}
                                 placeholder="Untitled Node"
@@ -488,7 +671,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                                 ref={descInputRef}
                                 type="text"
                                 value={desc}
-                                onChange={(e) => setDesc(e.target.value)}
+                                onChange={handleDescChange}
                                 onBlur={handleDescCommit}
                                 onKeyDown={(e) => e.key === 'Enter' && handleDescCommit()}
                                 placeholder="Add a brief description..."

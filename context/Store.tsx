@@ -458,7 +458,10 @@ const reducer = (state: State, action: Action): State => {
         nodes: action.payload.nodes,
         contentMap: action.payload.contentMap,
         layoutMode: action.payload.layoutMode || 'horizontal',
-        metadata: action.payload.metadata,
+        metadata: {
+            ...action.payload.metadata,
+            lastExported: now
+        },
         activeNodeId: action.payload.nodes[0]?.id || null,
         focusedNodeId: null, // Reset focus on import
         ui: { 

@@ -323,9 +323,9 @@ const ResearchLogApp: React.FC = () => {
                 {/* Editable Project Name */}
                 <div className="flex flex-col justify-center min-w-0 ml-2">
                     <div className="flex items-center gap-2">
-                        <div className="inline-grid items-center max-w-[400px] -ml-1.5 relative overflow-hidden rounded">
+                        <div className="inline-grid items-center w-fit max-w-[400px] -ml-1.5 relative overflow-hidden rounded">
                             {/* Mirror Span for Width Calculation */}
-                            <span className="col-start-1 row-start-1 font-bold text-lg tracking-tight px-1.5 py-0.5 invisible whitespace-pre border border-transparent min-w-0">
+                            <span className="col-start-1 row-start-1 font-bold text-lg tracking-tight px-1.5 py-0.5 invisible whitespace-pre border border-transparent min-w-0 max-w-[400px] truncate">
                                 {state.projectName || "Untitled Project"}
                             </span>
                             
@@ -334,7 +334,7 @@ const ResearchLogApp: React.FC = () => {
                                 type="text"
                                 value={state.projectName}
                                 onChange={(e) => dispatch({ type: 'UPDATE_PROJECT_NAME', payload: e.target.value })}
-                                className="col-start-1 row-start-1 w-full h-full font-bold text-gray-800 dark:text-gray-100 tracking-tight text-lg bg-transparent border border-transparent focus:border-gray-200 dark:focus:border-zinc-700 focus:bg-gray-50 dark:focus:bg-zinc-800 hover:border-gray-100 dark:hover:border-zinc-800 rounded px-1.5 py-0.5 transition-all outline-none truncate min-w-0"
+                                className="col-start-1 row-start-1 w-auto h-full font-bold text-gray-800 dark:text-gray-100 tracking-tight text-lg bg-transparent border border-transparent focus:border-gray-200 dark:focus:border-zinc-700 focus:bg-gray-50 dark:focus:bg-zinc-800 hover:border-gray-100 dark:hover:border-zinc-800 rounded px-1.5 py-0.5 transition-all outline-none truncate min-w-[80px] max-w-[400px]"
                                 placeholder="Untitled Project"
                                 title="Click to edit project name"
                             />
