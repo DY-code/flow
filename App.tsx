@@ -3,12 +3,13 @@ import { StoreProvider, useStore } from './context/Store';
 import OutlineTree from './components/OutlineTree';
 import Editor from './components/Editor';
 import StatsModal from './components/StatsModal';
+import VersionsModal from './components/VersionsModal';
 import SplitPane from './components/SplitPane';
 import { 
     IconDownload, IconUpload, IconChart, IconMenu, 
     IconLayoutHorizontal, IconLayoutVertical, IconListDetails, IconFilePlus,
     IconSun, IconMoon, IconViewSplit, IconViewEditor, IconViewOutline,
-    IconHome, IconChevronRight, IconChevronDown
+    IconHome, IconChevronRight, IconChevronDown, IconGitCommit
 } from './components/Icons';
 import { downloadJson, downloadMarkdown } from './utils/helpers';
 import { ProjectData, LogNode } from './types';
@@ -120,6 +121,8 @@ const ResearchLogApp: React.FC = () => {
   // New Project Menu State
   const [isNewProjectMenuOpen, setIsNewProjectMenuOpen] = useState(false);
   const newProjectMenuRef = useRef<HTMLDivElement>(null);
+  const [isEditingProjectName, setIsEditingProjectName] = useState(false);
+  const projectNameInputRef = useRef<HTMLInputElement>(null);
 
   // Unsaved Changes Logic
   const hasUnsavedChanges = (() => {
@@ -165,6 +168,13 @@ const ResearchLogApp: React.FC = () => {
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isExportMenuOpen, isNewProjectMenuOpen]);
+
+  useEffect(() => {
+    if (isEditingProjectName) {
+        projectNameInputRef.current?.focus();
+        projectNameInputRef.current?.select();
+    }
+  }, [isEditingProjectName]);
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -323,29 +333,37 @@ const ResearchLogApp: React.FC = () => {
                 {/* Editable Project Name */}
                 <div className="flex flex-col justify-center min-w-0 ml-2">
                     <div className="flex items-center gap-2">
-                        <div className="inline-grid items-center w-fit max-w-[400px] -ml-1.5 relative overflow-hidden rounded">
-                            {/* Mirror Span for Width Calculation */}
-                            <span className="col-start-1 row-start-1 font-bold text-lg tracking-tight px-1.5 py-0.5 invisible whitespace-pre border border-transparent min-w-0 max-w-[400px] truncate">
-                                {state.projectName || "Untitled Project"}
-                            </span>
-                            
-                            {/* Actual Input */}
+                        {isEditingProjectName ? (
                             <input 
+                                ref={projectNameInputRef}
                                 type="text"
                                 value={state.projectName}
                                 onChange={(e) => dispatch({ type: 'UPDATE_PROJECT_NAME', payload: e.target.value })}
-                                className="col-start-1 row-start-1 w-auto h-full font-bold text-gray-800 dark:text-gray-100 tracking-tight text-lg bg-transparent border border-transparent focus:border-gray-200 dark:focus:border-zinc-700 focus:bg-gray-50 dark:focus:bg-zinc-800 hover:border-gray-100 dark:hover:border-zinc-800 rounded px-1.5 py-0.5 transition-all outline-none truncate min-w-[80px] max-w-[400px]"
+                                onBlur={() => setIsEditingProjectName(false)}
+                                onKeyDown={(e) => e.key === 'Enter' && setIsEditingProjectName(false)}
+                                className="h-full font-bold text-gray-800 dark:text-gray-100 tracking-tight text-lg bg-transparent border border-transparent focus:border-gray-200 dark:focus:border-zinc-700 focus:bg-gray-50 dark:focus:bg-zinc-800 hover:border-gray-100 dark:hover:border-zinc-800 rounded px-1.5 py-0.5 transition-all outline-none"
+                                style={{ maxWidth: '25vw' }}
                                 placeholder="Untitled Project"
-                                title="Click to edit project name"
+                                title="Edit project name"
                             />
-                        </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => setIsEditingProjectName(true)}
+                                className="font-bold text-gray-800 dark:text-gray-100 tracking-tight text-lg bg-transparent rounded px-1.5 py-0.5 -ml-1.5 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors truncate"
+                                style={{ maxWidth: '25vw' }}
+                                title="Click to edit project name"
+                            >
+                                {state.projectName || "Untitled Project"}
+                            </button>
+                        )}
                         {/* Status Indicator */}
                         <div 
                             className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${hasUnsavedChanges ? 'bg-orange-500 animate-pulse' : 'bg-green-500'}`} 
                             title={hasUnsavedChanges ? "Unexported changes" : "All changes exported"}
                         />
                     </div>
-                    <span className="text-[9px] text-gray-400 dark:text-gray-500 font-mono pl-0.5 hidden sm:block">V2.0 • LOCAL STORAGE</span>
+                    <span className="text-[9px] text-gray-400 dark:text-gray-500 font-mono pl-0.5 hidden sm:block">LOCAL STORAGE</span>
                 </div>
             </div>
 
@@ -406,6 +424,13 @@ const ResearchLogApp: React.FC = () => {
                     title="Statistics"
                 >
                     <IconChart className="w-5 h-5" />
+                </button>
+                <button
+                    onClick={() => dispatch({ type: 'TOGGLE_VERSIONS', payload: true })}
+                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:text-gray-400 dark:hover:bg-zinc-800 dark:hover:text-blue-400 rounded-lg transition-colors"
+                    title="Version History"
+                >
+                    <IconGitCommit className="w-5 h-5" />
                 </button>
                 <div className="h-6 w-px bg-gray-200 dark:bg-zinc-800 mx-1"></div>
                 
@@ -469,7 +494,7 @@ const ResearchLogApp: React.FC = () => {
                     {isExportMenuOpen && (
                         <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-gray-100 dark:border-zinc-700 z-50">
                             <button onClick={handleExportJson} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700">Export as JSON</button>
-                            <button onClick={handleExportMarkdown} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700">Export as Markdown (V2.0)</button>
+                            <button onClick={handleExportMarkdown} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700">Export as Markdown</button>
                         </div>
                     )}
                 </div>
@@ -523,6 +548,7 @@ const ResearchLogApp: React.FC = () => {
         </div>
 
         <StatsModal />
+        <VersionsModal />
       </div>
     </div>
   );

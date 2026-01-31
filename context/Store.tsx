@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
-import { LogNode, ContentMap, ProjectData, NodeStatus, LayoutMode, OutlineMode, ViewMode } from '../types';
+import { LogNode, ContentMap, ProjectData, VersionEntry, NodeStatus, LayoutMode, OutlineMode, ViewMode } from '../types';
 import { generateId } from '../utils/helpers';
 
 // --- State Definition ---
@@ -9,6 +9,7 @@ interface State {
   contentMap: ContentMap;
   activeNodeId: string | null;
   focusedNodeId: string | null; // New: For Focus Mode
+  versions: VersionEntry[];
   layoutMode: LayoutMode;
   metadata: {
     version: string;
@@ -19,6 +20,7 @@ interface State {
   ui: {
     isMobile: boolean;
     showStats: boolean;
+    showVersions: boolean;
     viewMode: ViewMode;
     showOutlineDetails: boolean;
     theme: 'light' | 'dark';
@@ -29,6 +31,21 @@ interface State {
 const STORAGE_KEY = 'flow-data';
 const MOBILE_THRESHOLD = 768; 
 const DEFAULT_PROJECT_NAME = 'Untitled Project';
+const MAX_VERSIONS = 3;
+
+const buildProjectData = (state: State): ProjectData => ({
+  projectName: state.projectName,
+  nodes: state.nodes,
+  contentMap: state.contentMap,
+  layoutMode: state.layoutMode,
+  metadata: state.metadata,
+  ui: {
+    viewMode: state.ui.viewMode,
+    showOutlineDetails: state.ui.showOutlineDetails,
+    theme: state.ui.theme,
+    outlineMode: state.ui.outlineMode
+  }
+});
 
 // Helper to create a fresh state object
 const createEmptyState = (isMobile: boolean): State => {
@@ -46,6 +63,7 @@ const createEmptyState = (isMobile: boolean): State => {
     },
     activeNodeId: rootId,
     focusedNodeId: null,
+    versions: [],
     layoutMode: 'horizontal',
     metadata: {
       version: '2.0.0',
@@ -56,6 +74,7 @@ const createEmptyState = (isMobile: boolean): State => {
     ui: {
       isMobile: isMobile,
       showStats: false,
+      showVersions: false,
       viewMode: 'split',
       showOutlineDetails: true,
       theme: 'light',
@@ -89,10 +108,12 @@ const getInitialState = (): State => {
         })),
         activeNodeId: parsed.nodes.length > 0 ? (parsed.activeNodeId || parsed.nodes[0].id) : null,
         focusedNodeId: parsed.focusedNodeId || null, // Load or null
+        versions: parsed.versions || [],
         layoutMode: parsed.layoutMode || 'horizontal',
         ui: { 
             isMobile: window.innerWidth < MOBILE_THRESHOLD, 
             showStats: false,
+            showVersions: false,
             viewMode: initialViewMode,
             showOutlineDetails: parsed.ui?.showOutlineDetails ?? true,
             theme: parsed.ui?.theme || 'light',
@@ -131,12 +152,15 @@ type Action =
   | { type: 'RESET_PROJECT' }
   | { type: 'SET_MOBILE'; payload: boolean }
   | { type: 'TOGGLE_STATS'; payload: boolean }
+  | { type: 'TOGGLE_VERSIONS'; payload: boolean }
   | { type: 'SET_VIEW_MODE'; payload: ViewMode }
   | { type: 'TOGGLE_OUTLINE_DETAILS'; payload?: boolean }
   | { type: 'TOGGLE_THEME' }
   | { type: 'TOGGLE_OUTLINE_MODE' }
   | { type: 'SET_LAYOUT_MODE'; payload: LayoutMode }
-  | { type: 'UPDATE_LAST_EXPORTED' };
+  | { type: 'UPDATE_LAST_EXPORTED' }
+  | { type: 'SAVE_VERSION' }
+  | { type: 'ROLLBACK_VERSION'; payload: string };
 
 const reducer = (state: State, action: Action): State => {
   const now = new Date().toISOString();
@@ -442,6 +466,7 @@ const reducer = (state: State, action: Action): State => {
             contentMap: newContentMap,
             activeNodeId: newNodes[0].id,
             focusedNodeId: null, // Exit focus mode
+            versions: [],
             metadata: {
                 ...state.metadata,
                 createdAt: now,
@@ -464,6 +489,7 @@ const reducer = (state: State, action: Action): State => {
         },
         activeNodeId: action.payload.nodes[0]?.id || null,
         focusedNodeId: null, // Reset focus on import
+        versions: [],
         ui: { 
             ...state.ui, 
             viewMode: action.payload.ui?.viewMode || ((action.payload.ui as any)?.sidebarVisible === false ? 'editor' : 'split'),
@@ -481,6 +507,9 @@ const reducer = (state: State, action: Action): State => {
 
     case 'TOGGLE_STATS':
       return { ...state, ui: { ...state.ui, showStats: action.payload } };
+
+    case 'TOGGLE_VERSIONS':
+      return { ...state, ui: { ...state.ui, showVersions: action.payload } };
 
     case 'SET_VIEW_MODE':
       return { 
@@ -524,6 +553,42 @@ const reducer = (state: State, action: Action): State => {
             }
         };
 
+    case 'SAVE_VERSION': {
+        const entry: VersionEntry = {
+            id: generateId(),
+            createdAt: now,
+            data: buildProjectData(state),
+            activeNodeId: state.activeNodeId,
+            focusedNodeId: state.focusedNodeId
+        };
+        const versions = [entry, ...state.versions].slice(0, MAX_VERSIONS);
+        return { ...state, versions };
+    }
+
+    case 'ROLLBACK_VERSION': {
+        const target = state.versions.find(v => v.id === action.payload);
+        if (!target) return state;
+
+        const data = target.data;
+        return {
+            ...state,
+            projectName: data.projectName || DEFAULT_PROJECT_NAME,
+            nodes: data.nodes,
+            contentMap: { ...data.contentMap, root: data.contentMap.root || '' },
+            layoutMode: data.layoutMode || 'horizontal',
+            metadata: { ...data.metadata, lastModified: now },
+            activeNodeId: target.activeNodeId || data.nodes[0]?.id || null,
+            focusedNodeId: target.focusedNodeId || null,
+            ui: {
+                ...state.ui,
+                viewMode: data.ui?.viewMode || state.ui.viewMode,
+                showOutlineDetails: data.ui?.showOutlineDetails ?? state.ui.showOutlineDetails,
+                theme: data.ui?.theme || state.ui.theme,
+                outlineMode: data.ui?.outlineMode || state.ui.outlineMode
+            }
+        };
+    }
+
     default:
       return state;
   }
@@ -542,12 +607,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Persist to LocalStorage
   useEffect(() => {
-    const dataToSave: ProjectData & { focusedNodeId?: string | null } = {
+    const dataToSave: ProjectData & { focusedNodeId?: string | null; versions?: VersionEntry[] } = {
       projectName: state.projectName,
       nodes: state.nodes,
       contentMap: state.contentMap,
       metadata: state.metadata,
       layoutMode: state.layoutMode,
+      versions: state.versions,
       focusedNodeId: state.focusedNodeId, // Persist focus state if desired
       ui: { 
         viewMode: state.ui.viewMode,

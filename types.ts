@@ -38,6 +38,14 @@ export interface ProjectData {
   };
 }
 
+export interface VersionEntry {
+  id: string;
+  createdAt: string;
+  data: ProjectData;
+  activeNodeId: string | null;
+  focusedNodeId: string | null;
+}
+
 export interface DragItem {
   id: string;
   index: number;

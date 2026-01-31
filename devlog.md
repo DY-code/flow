@@ -2,7 +2,11 @@ web端（多文件）
 
 使用gemini构建：https://aistudio.google.com/apps/drive/1HvZqNv9hRVdaVh1N7hyUZ5l2zhzstrDV?showPreview=true&showAssistant=true
 
-
+使用git提交：
+git clone https://github.com/DY-code/flow.git
+git add .
+git commit -m "your_comment"
+git push origin main
 
 待改进：
 
@@ -21,7 +25,7 @@ web端（多文件）
 
 - 支持（基于git的）版本控制与备份
 - 探索更便捷的启动方式，暂不考虑部署到github.io
-- 修改项目标题文本框，使文本框长度自适应项目标题，确保项目标题旁渲染的状态圆点能紧靠标题（多次尝试未果，暂时放弃）
+
 - markdown进阶功能支持（比如...）
 - 优化markdown预览模式下的字体（使用typora风格）
 - （可能需要依赖本地文件访问）基于项目文件夹，建立本地文件链接
@@ -31,6 +35,7 @@ web端（多文件）
 
 1.31：
 
+- 修改项目标题文本框，使文本框长度自适应项目标题，确保项目标题旁渲染的状态圆点能紧靠标题
 - 编辑器优化：执行撤销操作后光标位置乱跳（多次尝试未果，暂时放弃）
 - 改进：加载项目时，默认使用分隔视图（全部默认使用分隔视图）
 - 修复bug：全局文本区开头部分的内容被自动删除
