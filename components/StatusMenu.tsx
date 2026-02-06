@@ -30,7 +30,7 @@ const StatusMenu: React.FC<Props> = ({ currentStatus, onChange, isOpen, onToggle
       case 'waiting': return <IconSquare className={`${className} text-gray-400 dark:text-zinc-500`} />;
       case 'inProgress': return <IconPlay className={`${className} text-blue-500`} />;
       case 'completed': return <IconCheck className={`${className} text-green-500`} />;
-      case 'onHold': return <IconMinus className={`${className} text-orange-500`} />;
+      case 'onHold': return <IconMinus className={`${className} text-amber-500`} />;
     }
   };
 

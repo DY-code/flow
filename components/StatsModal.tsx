@@ -6,7 +6,7 @@ const COLORS = {
   waiting: '#9CA3AF',    // gray-400
   inProgress: '#3B82F6', // blue-500
   completed: '#22C55E',  // green-500
-  onHold: '#F97316'      // orange-500
+  onHold: '#F59E0B'      // amber-500
 };
 
 const StatsModal: React.FC = () => {

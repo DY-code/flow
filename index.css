@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-fg-default: #24292f;
+  --color-fg-muted: #57606a;
+  --color-bg-default: #ffffff;
+  --color-bg-subtle: #f6f8fa;
+  --color-bg-code: rgba(175, 184, 193, 0.2);
+  --color-border: #d0d7de;
+  --color-accent: #0969da;
+}
+
+.dark {
+  --color-fg-default: #e4e4e7;
+  --color-fg-muted: #a1a1aa;
+  --color-bg-default: #09090b;
+  --color-bg-subtle: #18181b;
+  --color-bg-code: rgba(63, 63, 70, 0.4);
+  --color-border: #27272a;
+  --color-accent: #60a5fa;
+}
+
+body { font-family: 'Inter', sans-serif; }
+
+/* Ensure underline tags are visible */
+.prose u, u { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #d1d5db; }
+
+.dark ::-webkit-scrollbar-thumb { background: #3f3f46; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+
+/* Prism / Editor Syntax Highlighting */
+/* FIXED: Removed font-weight: bold to prevent cursor misalignment */
+.token.heading { font-weight: normal; color: var(--color-accent); }
+.token.bold { font-weight: normal; color: var(--color-fg-default); background-color: rgba(0,0,0,0.05); }
+.dark .token.bold { background-color: rgba(255,255,255,0.1); }
+
+.token.italic { font-style: italic; }
+.token.underline { text-decoration: underline; }
+.token.strike { text-decoration: line-through; opacity: 0.7; }
+.token.list { color: var(--color-fg-muted); }
+.token.quote { color: var(--color-fg-muted); font-style: italic; }
+.token.link { color: var(--color-accent); text-decoration: underline; }
+.token.url { color: var(--color-fg-muted); }
+.token.code {
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  background: var(--color-bg-code);
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+/* Editor Overrides */
+.prism-editor-wrapper textarea,
+.prism-editor-wrapper pre {
+  outline: none !important;
+}
+
+/* Fix alignment issues between textarea and pre */
+/* Use standard word-break only */
+.prism-editor-wrapper textarea,
+.prism-editor-wrapper pre {
+  word-break: break-all !important;
+  white-space: pre-wrap !important;
+  overflow-wrap: normal !important;
+  line-break: auto !important;
+  font-variant-ligatures: none !important;
+}
+
+/* Keep editor highlight layer typography aligned with textarea */
+.prism-editor-wrapper .token.code {
+  font-size: inherit;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* Ensure Preview mode behaves consistently (Justify is fine here) */
+.prose p, .prose li {
+  text-align: justify;
+  word-break: break-all;
+  line-break: anywhere;
+}
