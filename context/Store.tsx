@@ -25,6 +25,9 @@ interface State {
     showOutlineDetails: boolean;
     theme: 'light' | 'dark';
     outlineMode: OutlineMode;
+    hideOnHold: boolean;
+    showFocusedRoot: boolean;
+    autoBackupOnSaveVersion: boolean;
   };
 }
 
@@ -43,7 +46,10 @@ const buildProjectData = (state: State): ProjectData => ({
     viewMode: state.ui.viewMode,
     showOutlineDetails: state.ui.showOutlineDetails,
     theme: state.ui.theme,
-    outlineMode: state.ui.outlineMode
+    outlineMode: state.ui.outlineMode,
+    hideOnHold: state.ui.hideOnHold,
+    showFocusedRoot: state.ui.showFocusedRoot,
+    autoBackupOnSaveVersion: state.ui.autoBackupOnSaveVersion
   }
 });
 
@@ -78,7 +84,10 @@ const createEmptyState = (isMobile: boolean): State => {
       viewMode: 'split',
       showOutlineDetails: true,
       theme: 'light',
-      outlineMode: 'tree'
+      outlineMode: 'tree',
+      hideOnHold: false,
+      showFocusedRoot: false,
+      autoBackupOnSaveVersion: false
     }
   };
 };
@@ -117,7 +126,10 @@ const getInitialState = (): State => {
             viewMode: initialViewMode,
             showOutlineDetails: parsed.ui?.showOutlineDetails ?? true,
             theme: parsed.ui?.theme || 'light',
-            outlineMode: parsed.ui?.outlineMode || 'tree'
+            outlineMode: parsed.ui?.outlineMode || 'tree',
+            hideOnHold: parsed.ui?.hideOnHold ?? false,
+            showFocusedRoot: parsed.ui?.showFocusedRoot ?? false,
+            autoBackupOnSaveVersion: parsed.ui?.autoBackupOnSaveVersion ?? false
         },
         contentMap: { ...parsed.contentMap, root: parsed.contentMap.root || '' },
         metadata: {
@@ -157,6 +169,9 @@ type Action =
   | { type: 'TOGGLE_OUTLINE_DETAILS'; payload?: boolean }
   | { type: 'TOGGLE_THEME' }
   | { type: 'TOGGLE_OUTLINE_MODE' }
+  | { type: 'TOGGLE_HIDE_ON_HOLD'; payload?: boolean }
+  | { type: 'TOGGLE_ROOT_FOCUS_VIEW'; payload?: boolean }
+  | { type: 'TOGGLE_AUTO_BACKUP_ON_SAVE_VERSION'; payload?: boolean }
   | { type: 'SET_LAYOUT_MODE'; payload: LayoutMode }
   | { type: 'UPDATE_LAST_EXPORTED' }
   | { type: 'SAVE_VERSION' }
@@ -495,7 +510,10 @@ const reducer = (state: State, action: Action): State => {
             viewMode: action.payload.ui?.viewMode || ((action.payload.ui as any)?.sidebarVisible === false ? 'editor' : 'split'),
             showOutlineDetails: action.payload.ui?.showOutlineDetails ?? true,
             theme: action.payload.ui?.theme || 'light',
-            outlineMode: action.payload.ui?.outlineMode || 'tree'
+            outlineMode: action.payload.ui?.outlineMode || 'tree',
+            hideOnHold: action.payload.ui?.hideOnHold ?? false,
+            showFocusedRoot: action.payload.ui?.showFocusedRoot ?? false,
+            autoBackupOnSaveVersion: action.payload.ui?.autoBackupOnSaveVersion ?? false
         }
       };
 
@@ -541,6 +559,35 @@ const reducer = (state: State, action: Action): State => {
             ui: { ...state.ui, outlineMode: state.ui.outlineMode === 'tree' ? 'list' : 'tree' }
         };
 
+    case 'TOGGLE_HIDE_ON_HOLD':
+        return {
+            ...state,
+            ui: {
+                ...state.ui,
+                hideOnHold: action.payload !== undefined ? action.payload : !state.ui.hideOnHold
+            }
+        };
+
+    case 'TOGGLE_ROOT_FOCUS_VIEW':
+        return {
+            ...state,
+            ui: {
+                ...state.ui,
+                showFocusedRoot: action.payload !== undefined ? action.payload : !state.ui.showFocusedRoot
+            }
+        };
+
+    case 'TOGGLE_AUTO_BACKUP_ON_SAVE_VERSION':
+        return {
+            ...state,
+            ui: {
+                ...state.ui,
+                autoBackupOnSaveVersion: action.payload !== undefined
+                  ? action.payload
+                  : !state.ui.autoBackupOnSaveVersion
+            }
+        };
+
     case 'SET_LAYOUT_MODE':
         return { ...state, layoutMode: action.payload };
 
@@ -584,7 +631,10 @@ const reducer = (state: State, action: Action): State => {
                 viewMode: data.ui?.viewMode || state.ui.viewMode,
                 showOutlineDetails: data.ui?.showOutlineDetails ?? state.ui.showOutlineDetails,
                 theme: data.ui?.theme || state.ui.theme,
-                outlineMode: data.ui?.outlineMode || state.ui.outlineMode
+                outlineMode: data.ui?.outlineMode || state.ui.outlineMode,
+                hideOnHold: data.ui?.hideOnHold ?? state.ui.hideOnHold,
+                showFocusedRoot: data.ui?.showFocusedRoot ?? state.ui.showFocusedRoot,
+                autoBackupOnSaveVersion: data.ui?.autoBackupOnSaveVersion ?? state.ui.autoBackupOnSaveVersion
             }
         };
     }
@@ -619,7 +669,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         viewMode: state.ui.viewMode,
         showOutlineDetails: state.ui.showOutlineDetails,
         theme: state.ui.theme,
-        outlineMode: state.ui.outlineMode
+        outlineMode: state.ui.outlineMode,
+        hideOnHold: state.ui.hideOnHold,
+        showFocusedRoot: state.ui.showFocusedRoot,
+        autoBackupOnSaveVersion: state.ui.autoBackupOnSaveVersion
       } 
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));

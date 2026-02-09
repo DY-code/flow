@@ -2,6 +2,10 @@ web端（多文件）
 
 使用gemini构建：https://aistudio.google.com/apps/drive/1HvZqNv9hRVdaVh1N7hyUZ5l2zhzstrDV?showPreview=true&showAssistant=true
 
+使用临时代理加速（windows cmd）：
+set HTTP_PROXY=http://127.0.0.1:7890
+set HTTPS_PROXY=http://127.0.0.1:7890
+
 使用git提交：
 git clone https://github.com/DY-code/flow.git
 git add .
@@ -25,13 +29,11 @@ git push origin main
 
 （验证假设与猜想，debug）待验证/已证实/已证伪
 
-- 在保存当前版本时，将当前版本对应的json文件备份到浏览器下载目录
-
-- 聚焦模式下，将聚焦节点的文本添加到全局文本区（提供一个切换按钮即可）
-
-- 提供搁置节点的隐藏选项
-
 - 考虑实现pwa
+
+- 添加功能：使用tab+键缩进父节点，子节点同时跟随缩进
+
+- 黑暗主题下思维流区和其他编辑区颜色不一致
 
 - 支持（基于git的）版本控制与备份
 - 探索更便捷的启动方式，暂不考虑部署到github.io
@@ -43,7 +45,17 @@ git push origin main
 
 ---
 
+2.9：
+- 改进：优化markdown预览效果，缩小预览时的标题字体，和已有风格协调。给预览模式再添加一个简略的浮动大纲，显示在预览界面的右侧
+- 改进：在“版本历史”中保存当前版本时，将当前版本对应的json文件备份到浏览器下载目录，命名格式：项目名+当前时间
+
+2.8：
+- 改进：改名为flow
+
 2.6：
+- 改进：聚焦模式下，将聚焦节点的文本添加到全局文本区（提供一个切换按钮即可）
+- 改进：在“版本历史”中保存当前版本时，将当前版本对应的json文件备份到浏览器下载目录
+- 改进：提供搁置节点的隐藏选项（光标移动到附近才显示）
 - 修复bug：当天第一次启动时不能稳定加载
 
 ---

@@ -1,10 +1,17 @@
 import React from 'react';
 import { useStore } from '../context/Store';
 import { formatDate } from '../utils/helpers';
+import { downloadJsonDirect, formatDateForFilename, sanitizeFilename } from '../utils/helpers';
 
 const VersionsModal: React.FC = () => {
   const { state, dispatch } = useStore();
   const { ui, versions } = state;
+
+  const getSafeFilename = () => {
+    const name = sanitizeFilename(state.projectName || 'flow');
+    const dateStr = formatDateForFilename(new Date());
+    return `${name}_${dateStr}`;
+  };
 
   if (!ui.showVersions) return null;
 
@@ -32,12 +39,34 @@ const VersionsModal: React.FC = () => {
           <span className="text-xs text-gray-500 dark:text-gray-400">
             Saved versions: {versions.length} / 3
           </span>
-          <button
-            onClick={() => dispatch({ type: 'SAVE_VERSION' })}
-            className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 rounded-md"
-          >
-            Save Current Version
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => dispatch({ type: 'TOGGLE_AUTO_BACKUP_ON_SAVE_VERSION' })}
+              className={`text-[10px] font-medium px-2 py-1 rounded border transition-colors ${ui.autoBackupOnSaveVersion ? 'text-gray-700 dark:text-gray-200 border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/70' : 'text-gray-400 dark:text-zinc-500 border-gray-100 dark:border-zinc-800'}`}
+              title="Auto download JSON when saving versions"
+            >
+              自动备份
+            </button>
+            <button
+              onClick={async () => {
+                dispatch({ type: 'SAVE_VERSION' });
+                if (ui.autoBackupOnSaveVersion) {
+                  const data = {
+                    projectName: state.projectName,
+                    nodes: state.nodes,
+                    contentMap: state.contentMap,
+                    metadata: state.metadata,
+                    layoutMode: state.layoutMode,
+                    ui: state.ui
+                  };
+                  await downloadJsonDirect(data, `${getSafeFilename()}.json`);
+                }
+              }}
+              className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 rounded-md"
+            >
+              Save Current Version
+            </button>
+          </div>
         </div>
 
         {versions.length === 0 ? (

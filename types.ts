@@ -35,6 +35,9 @@ export interface ProjectData {
     theme?: 'light' | 'dark';
     outlineMode?: OutlineMode;
     viewMode?: ViewMode; // Replaces sidebarVisible
+    hideOnHold?: boolean;
+    showFocusedRoot?: boolean;
+    autoBackupOnSaveVersion?: boolean;
   };
 }
 

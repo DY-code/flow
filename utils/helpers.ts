@@ -72,6 +72,20 @@ export const downloadJson = async (data: object, filename: string): Promise<bool
   return saveFile(JSON.stringify(data, null, 2), filename, 'application/json');
 };
 
+export const downloadJsonDirect = async (data: object, filename: string): Promise<boolean> => {
+  // Force legacy download to skip File System Access API picker
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  return true;
+};
+
 export const downloadMarkdown = async (data: ProjectData, filename: string): Promise<boolean> => {
   // Use project name as H1
   let md = `# ${data.projectName || 'Flow Export'}\n\n`;

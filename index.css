@@ -87,3 +87,57 @@ body { font-family: 'Inter', sans-serif; }
   word-break: break-all;
   line-break: anywhere;
 }
+
+/* Markdown preview: tune heading scale to match editor visual rhythm */
+.markdown-preview.prose :is(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.3;
+  margin-top: 0.6em !important;
+  margin-bottom: 0.2em !important;
+}
+
+.markdown-preview.prose {
+  line-height: 1.56;
+}
+
+.markdown-preview :where(h1) { font-size: 1.55rem; }
+.markdown-preview :where(h2) { font-size: 1.35rem; }
+.markdown-preview :where(h3) { font-size: 1.18rem; }
+.markdown-preview :where(h4) { font-size: 1.05rem; }
+.markdown-preview :where(h5) { font-size: 0.95rem; }
+.markdown-preview :where(h6) { font-size: 0.88rem; }
+
+/* Markdown preview: slightly tighter body spacing */
+.markdown-preview :where(p, li) {
+  line-height: 1.56;
+}
+
+.markdown-preview :where(p) {
+  margin-top: 0.42em;
+  margin-bottom: 0.42em;
+}
+
+.markdown-preview :where(ul, ol) {
+  margin-top: 0.45em;
+  margin-bottom: 0.45em;
+}
+
+.markdown-preview :where(li + li) {
+  margin-top: 0.14em;
+}
+
+.markdown-preview :where(blockquote) {
+  line-height: 1.56;
+}
+
+.markdown-preview :where(pre, code) {
+  line-height: 1.45;
+}
+
+.markdown-preview.prose hr {
+  margin-top: 0.45em !important;
+  margin-bottom: 0.45em !important;
+}
+
+.markdown-preview.prose :is(h1, h2, h3, h4, h5, h6) + p {
+  margin-top: 0.25em !important;
+}

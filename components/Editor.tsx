@@ -21,6 +21,42 @@ const grammar = {
     'code': { pattern: /(`+)(?:(?!\1).)+\1/ },
 };
 
+interface PreviewHeadingItem {
+  level: number;
+  text: string;
+  domIndex: number;
+}
+
+const stripMarkdownInline = (text: string): string => {
+  return text
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[*_~]/g, '')
+    .replace(/<[^>]+>/g, '')
+    .trim();
+};
+
+const parsePreviewHeadings = (markdown: string): PreviewHeadingItem[] => {
+  const items: PreviewHeadingItem[] = [];
+  const lines = markdown.split('\n');
+  let domIndex = 0;
+
+  for (const line of lines) {
+    const match = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (!match) continue;
+    const level = match[1].length;
+    const text = stripMarkdownInline(match[2]);
+    if (!text) {
+      domIndex += 1;
+      continue;
+    }
+    items.push({ level, text, domIndex });
+    domIndex += 1;
+  }
+
+  return items;
+};
+
 interface EditorProps {
   nodeId: string | null;
   isRoot?: boolean;
@@ -51,6 +87,8 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
   const contentKey = isRoot ? 'root' : nodeId!;
   const rawContent = contentMap[contentKey] || '';
   const node = isRoot ? null : nodes.find(n => n.id === nodeId);
+  const focusedNode = isRoot && state.focusedNodeId ? nodes.find(n => n.id === state.focusedNodeId) : null;
+  const focusedNodeRaw = focusedNode ? (contentMap[focusedNode.id] || '') : '';
 
   // --- INITIAL STATE CALCULATION ---
   const [title, setTitle] = useState(() => {
@@ -70,15 +108,18 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
     const lines = rawContent.split('\n');
     return lines.slice(2).join('\n');
   });
+  const [focusedBody, setFocusedBody] = useState('');
 
   // Keep refs for title/desc/body to avoid stale closures in debounced callbacks
   const titleRef = useRef(title);
   const descRef = useRef(desc);
   const bodyRef = useRef(body);
+  const focusedBodyRef = useRef(focusedBody);
 
   useEffect(() => { titleRef.current = title; }, [title]);
   useEffect(() => { descRef.current = desc; }, [desc]);
   useEffect(() => { bodyRef.current = body; }, [body]);
+  useEffect(() => { focusedBodyRef.current = focusedBody; }, [focusedBody]);
 
   // Track editing state for Title and Desc
   const [editingField, setEditingField] = useState<'title' | 'desc' | null>(null);
@@ -88,6 +129,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
   const lastExternalTitleRef = useRef<string | null>(null);
   const lastExternalDescRef = useRef<string | null>(null);
   const lastExternalBodyRef = useRef<string | null>(null);
+  const lastExternalFocusedBodyRef = useRef<string | null>(null);
 
   useEffect(() => {
     let incomingTitle = '';
@@ -145,11 +187,36 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
 
   }, [isRoot, node, rawContent, editingField]);
 
+  const focusedNodeBody = useMemo(() => {
+    if (!focusedNode) return '';
+    const lines = focusedNodeRaw.split('\n');
+    return lines.slice(2).join('\n');
+  }, [focusedNode, focusedNodeRaw]);
+
+  const isRootFocusDisplay = isRoot && state.ui.showFocusedRoot && !!focusedNode;
+  const rootTextareaId = isRoot
+    ? `${textareaId}-${isRootFocusDisplay ? `focus-${focusedNode?.id || 'none'}` : 'global'}`
+    : textareaId;
+
+  useEffect(() => {
+    if (!isRoot) return;
+    const incomingFocusedBody = focusedNodeBody;
+    if (incomingFocusedBody !== lastExternalFocusedBodyRef.current) {
+      lastExternalFocusedBodyRef.current = incomingFocusedBody;
+      if (incomingFocusedBody !== focusedBodyRef.current) {
+        setFocusedBody(incomingFocusedBody);
+      }
+    }
+    if (lastExternalFocusedBodyRef.current === null) {
+      lastExternalFocusedBodyRef.current = incomingFocusedBody;
+    }
+  }, [isRoot, focusedNodeBody]);
+
   // Reset selection tracking when switching to a different content source
   useEffect(() => {
     selectionRef.current = null;
     shouldRestoreSelectionRef.current = false;
-  }, [contentKey]);
+  }, [contentKey, isRootFocusDisplay, focusedNode?.id, rootTextareaId]);
 
   // Input refs
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -253,7 +320,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
 
   // Debounced Body Change
   const handleBodyChange = useCallback((val: string) => {
-      const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
+      const textarea = document.getElementById(rootTextareaId) as HTMLTextAreaElement | null;
       if (textarea && !skipSelectionCaptureRef.current) {
           selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
           shouldRestoreSelectionRef.current = true;
@@ -272,7 +339,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
 
   // Debounced Raw Change (for Root)
   const handleRawChange = useCallback((val: string) => {
-      const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
+      const textarea = document.getElementById(rootTextareaId) as HTMLTextAreaElement | null;
       if (textarea && !skipSelectionCaptureRef.current) {
           selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
           shouldRestoreSelectionRef.current = true;
@@ -288,9 +355,30 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
       }, 700);
   }, [contentKey, dispatch]);
 
+  const handleFocusedBodyChange = useCallback((val: string) => {
+      if (!focusedNode) return;
+      const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
+      if (textarea && !skipSelectionCaptureRef.current) {
+          selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
+          shouldRestoreSelectionRef.current = true;
+      }
+      skipSelectionCaptureRef.current = false;
+      setFocusedBody(val);
+
+      if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
+
+      updateTimeoutRef.current = setTimeout(() => {
+          const formattedTitle = `# ${focusedNode.text || ''}`;
+          const formattedDesc = focusedNode.desc ? `> ${focusedNode.desc}` : '';
+          const newFullContent = `${formattedTitle}\n${formattedDesc}\n${val}`;
+          dispatch({ type: 'UPDATE_CONTENT', payload: { id: focusedNode.id, content: newFullContent } });
+          updateTimeoutRef.current = null;
+      }, 700);
+  }, [focusedNode, dispatch, rootTextareaId]);
+
   const restoreSelection = useCallback(() => {
       if (!shouldRestoreSelectionRef.current) return;
-      const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
+      const textarea = document.getElementById(rootTextareaId) as HTMLTextAreaElement | null;
       if (!textarea) return;
       const sel = selectionRef.current;
       if (!sel) return;
@@ -300,7 +388,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
       textarea.selectionStart = start;
       textarea.selectionEnd = end;
       shouldRestoreSelectionRef.current = false;
-  }, [textareaId]);
+  }, [rootTextareaId]);
 
   // Restore selection after controlled updates (fix Ctrl+Z cursor jump)
   useLayoutEffect(() => {
@@ -308,7 +396,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
       if (!shouldRestoreSelectionRef.current) return;
       const raf = requestAnimationFrame(() => restoreSelection());
       return () => cancelAnimationFrame(raf);
-  }, [body, restoreSelection]);
+  }, [body, focusedBody, restoreSelection]);
 
   // Save immediately on blur
   const handleEditorBlur = useCallback(() => {
@@ -316,12 +404,19 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           clearTimeout(updateTimeoutRef.current);
           updateTimeoutRef.current = null;
           if (isRoot) {
-               dispatch({ type: 'UPDATE_CONTENT', payload: { id: contentKey, content: body } });
+               if (isRootFocusDisplay && focusedNode) {
+                    const formattedTitle = `# ${focusedNode.text || ''}`;
+                    const formattedDesc = focusedNode.desc ? `> ${focusedNode.desc}` : '';
+                    const newFullContent = `${formattedTitle}\n${formattedDesc}\n${focusedBodyRef.current}`;
+                    dispatch({ type: 'UPDATE_CONTENT', payload: { id: focusedNode.id, content: newFullContent } });
+               } else {
+                    dispatch({ type: 'UPDATE_CONTENT', payload: { id: contentKey, content: body } });
+               }
           } else {
                updateContent(titleRef.current, descRef.current, body);
           }
       }
-  }, [isRoot, contentKey, body, updateContent, dispatch]);
+  }, [isRoot, isRootFocusDisplay, focusedNode, contentKey, body, updateContent, dispatch]);
 
   // --- NODE IMPORT / EXPORT HANDLERS ---
   
@@ -543,6 +638,24 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
         lineHeight: '1.625'
   }), []);
 
+  const rootDisplayContent = isRootFocusDisplay ? focusedBody : body;
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+  const previewMarkdown = isRoot ? rootDisplayContent : body;
+
+  const previewHeadings = useMemo(() => {
+    const all = parsePreviewHeadings(previewMarkdown);
+    return all.filter(item => item.level <= 3).slice(0, 24);
+  }, [previewMarkdown]);
+
+  const handleOutlineJump = useCallback((domIndex: number) => {
+    const container = previewScrollRef.current;
+    if (!container) return;
+    const headingEls = container.querySelectorAll('.markdown-preview h1, .markdown-preview h2, .markdown-preview h3, .markdown-preview h4, .markdown-preview h5, .markdown-preview h6');
+    const target = headingEls[domIndex] as HTMLElement | undefined;
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
   // --- RENDER ---
   if (!isRoot && (!nodeId || !node)) {
     return (
@@ -565,6 +678,16 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           <span className="text-[10px] text-gray-300 dark:text-zinc-600 uppercase font-bold tracking-widest border border-gray-100 dark:border-zinc-800 px-2 py-1 rounded select-none">
               {isRoot ? 'GLOBAL CONTEXT' : 'DETAIL EDITOR'}
           </span>
+          {isRoot && (
+            <button
+              onClick={() => dispatch({ type: 'TOGGLE_ROOT_FOCUS_VIEW' })}
+              disabled={!focusedNode}
+              className={`px-2 py-1 text-[10px] font-medium rounded border transition-colors ${focusedNode ? 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 border-gray-100 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80' : 'text-gray-300 dark:text-zinc-600 border-gray-100 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 cursor-not-allowed'}`}
+              title={focusedNode ? (isRootFocusDisplay ? 'Show Global Context' : 'Show Focused Node') : 'No focused node'}
+            >
+              {isRootFocusDisplay ? '显示全局' : '显示聚焦'}
+            </button>
+          )}
           <button
             onClick={() => setIsPreview(!isPreview)}
             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 dark:hover:text-blue-400 rounded-md transition-colors bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm border border-gray-100 dark:border-zinc-800 shadow-sm"
@@ -574,21 +697,44 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto relative flex flex-col">
+      {isPreview && previewHeadings.length > 0 && (
+        <aside className="hidden xl:block absolute right-4 top-1/2 -translate-y-1/2 z-20 pointer-events-none">
+          <div className="pointer-events-auto w-52 rounded-lg border border-gray-100 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/85 backdrop-blur-sm px-3 py-2 shadow-sm">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 dark:text-zinc-500 mb-2">Outline</div>
+            <div className="space-y-1 max-h-[60vh] overflow-auto">
+              {previewHeadings.map((item) => (
+                <button
+                  key={`${item.domIndex}-${item.text}`}
+                  onClick={() => handleOutlineJump(item.domIndex)}
+                  className={`block w-full text-left text-xs leading-5 text-gray-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 truncate ${item.level === 1 ? '' : item.level === 2 ? 'pl-2' : 'pl-4'}`}
+                  title={item.text}
+                >
+                  {item.text}
+                </button>
+              ))}
+            </div>
+          </div>
+        </aside>
+      )}
+
+      <div ref={previewScrollRef} className="flex-1 overflow-y-auto relative flex flex-col">
         {isRoot ? (
             // --- ROOT MODE ---
             isPreview ? (
-                <div className="w-full h-full p-8 overflow-y-auto">
-                    <article className="prose prose-sm sm:prose lg:prose-lg xl:prose-xl max-w-none dark:prose-invert">
-                        <Markdown rehypePlugins={[rehypeRaw]}>{rawContent || '*No content*'}</Markdown>
-                    </article>
+                <div className="w-full h-full p-8">
+                    <div className="mx-auto w-full max-w-5xl xl:pr-64">
+                        <article className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert">
+                            <Markdown rehypePlugins={[rehypeRaw]}>{rootDisplayContent || '*No content*'}</Markdown>
+                        </article>
+                    </div>
                 </div>
             ) : (
                 <div className="flex-1 p-8 prism-editor-wrapper">
                     <Editor
-                        value={body}
-                        textareaId={textareaId}
-                        onValueChange={handleRawChange}
+                        key={isRootFocusDisplay ? `root-focus-${focusedNode?.id || 'none'}` : 'root-global'}
+                        value={rootDisplayContent}
+                        textareaId={rootTextareaId}
+                        onValueChange={isRootFocusDisplay ? handleFocusedBodyChange : handleRawChange}
                         onBlur={handleEditorBlur}
                         highlight={highlightWithPrism}
                         padding={0}
@@ -601,7 +747,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
             )
         ) : (
             // --- NODE MODE ---
-            <div className="flex flex-col min-h-full p-8 max-w-4xl mx-auto w-full">
+            <div className={`flex flex-col min-h-full p-8 mx-auto w-full ${isPreview ? 'max-w-5xl xl:pr-64' : 'max-w-4xl'}`}>
                 
                 {/* Header Section */}
                 <div className="mb-2 flex items-end justify-between gap-4">
@@ -692,9 +838,11 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
 
                 {/* Body / Editor */}
                 {isPreview ? (
-                    <article className="prose prose-sm sm:prose lg:prose-lg xl:prose-xl max-w-none flex-1 dark:prose-invert">
-                        <Markdown rehypePlugins={[rehypeRaw]}>{body || '*No content*'}</Markdown>
-                    </article>
+                    <div>
+                        <article className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert">
+                            <Markdown rehypePlugins={[rehypeRaw]}>{body || '*No content*'}</Markdown>
+                        </article>
+                    </div>
                 ) : (
                     <div className="flex-1 prism-editor-wrapper">
                          <Editor

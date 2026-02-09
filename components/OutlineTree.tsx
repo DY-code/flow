@@ -70,6 +70,11 @@ const OutlineTree: React.FC = () => {
         }
     }
 
+    // 1.5 Hide On Hold Filter (Outline only)
+    if (ui.hideOnHold) {
+        filteredNodes = filteredNodes.filter(node => node.status !== 'onHold');
+    }
+
     // 2. Collapse Filter
     const visible: LogNode[] = [];
     let skipUntilDepth: number | null = null;

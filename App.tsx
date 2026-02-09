@@ -9,7 +9,7 @@ import {
     IconDownload, IconUpload, IconChart, IconMenu, 
     IconLayoutHorizontal, IconLayoutVertical, IconListDetails, IconFilePlus,
     IconSun, IconMoon, IconViewSplit, IconViewEditor, IconViewOutline,
-    IconHome, IconChevronRight, IconChevronDown, IconGitCommit
+    IconHome, IconChevronRight, IconChevronDown, IconGitCommit, IconMinus
 } from './components/Icons';
 import { downloadJson, downloadMarkdown } from './utils/helpers';
 import { ProjectData, LogNode } from './types';
@@ -49,7 +49,7 @@ const FocusArea: React.FC = () => {
     return (
         <div className="h-full w-full bg-gray-50 dark:bg-zinc-900 flex flex-col transition-colors">
             {/* Header for Focus Area */}
-            <div className="h-8 bg-gray-100 dark:bg-zinc-800 border-b border-gray-200 dark:border-zinc-700 flex items-center px-3 justify-between flex-shrink-0 transition-colors">
+            <div className="h-8 bg-gray-100 dark:bg-zinc-800 border-b border-gray-200 dark:border-zinc-700 flex items-center px-3 justify-between flex-shrink-0 transition-colors group">
                 {state.focusedNodeId ? (
                     <div className="flex items-center text-xs font-medium text-gray-600 dark:text-gray-300 overflow-hidden whitespace-nowrap mask-linear-fade">
                         <button 
@@ -75,6 +75,16 @@ const FocusArea: React.FC = () => {
                 ) : (
                     <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">逻辑链 & 思维流</span>
                 )}
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                        onClick={() => dispatch({ type: 'TOGGLE_HIDE_ON_HOLD' })}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        title={state.ui.hideOnHold ? 'Show On Hold Nodes' : 'Hide On Hold Nodes'}
+                    >
+                        <IconMinus className="w-3 h-3" />
+                        <span className="hidden sm:inline">{state.ui.hideOnHold ? '显示搁置' : '隐藏搁置'}</span>
+                    </button>
+                </div>
             </div>
             
             <div className="flex-1 overflow-hidden">
