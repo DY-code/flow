@@ -269,7 +269,7 @@ const OutlineTree: React.FC = () => {
 
   return (
     <div 
-        className="flex-1 overflow-y-auto pb-20 bg-white dark:bg-zinc-900 outline-none transition-colors" 
+        className="flex-1 overflow-y-auto pb-0 bg-white dark:bg-zinc-900 outline-none transition-colors" 
         ref={listRef} 
         tabIndex={0} // Make container focusable
         onKeyDown={handleContainerKeyDown}
@@ -465,7 +465,7 @@ const OutlineTree: React.FC = () => {
       
       {/* Empty Area Click */}
       <div 
-        className="h-full min-h-[100px] cursor-default" 
+        className="h-[108px] min-h-[108px] cursor-default" 
         onClick={() => {
             listRef.current?.focus();
             if(nodes.length === 0) dispatch({ type: 'INSERT_NODE', payload: { targetId: 'ROOT_PLACEHOLDER', position: 'after' } });
