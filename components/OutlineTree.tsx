@@ -24,6 +24,11 @@ const OutlineTree: React.FC = () => {
 
   // Ref to store input elements for focus management
   const inputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  const tabGestureRef = useRef<{ pressed: boolean; chordUsed: boolean; shift: boolean }>({
+    pressed: false,
+    chordUsed: false,
+    shift: false
+  });
   
   // Refs for tracking previous state to detect new nodes
   const prevNodesRef = useRef(nodes);
@@ -124,14 +129,32 @@ const OutlineTree: React.FC = () => {
     }
     
     const node = visibleNodes[activeIndex];
+    if (!node && !['ArrowUp', 'ArrowDown'].includes(e.key)) {
+      return;
+    }
 
     // Prevent default scrolling/tabbing for custom nav keys
     // Allow Ctrl+Enter to pass through if we don't handle it here (though we do handle it)
-    if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'F2', 'Backspace', 'Delete'].includes(e.key) || (e.key === 'Enter' && e.ctrlKey)) {
+    if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'F2', 'Backspace', 'Delete', ']'].includes(e.key) || (e.key === 'Enter' && e.ctrlKey)) {
         if(e.key !== 'Tab') e.preventDefault();
     }
     
     e.stopPropagation();
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      tabGestureRef.current.pressed = true;
+      tabGestureRef.current.chordUsed = false;
+      tabGestureRef.current.shift = e.shiftKey;
+      return;
+    }
+
+    if (e.key === ']' && tabGestureRef.current.pressed) {
+      e.preventDefault();
+      tabGestureRef.current.chordUsed = true;
+      dispatch({ type: 'INDENT_SUBTREE', payload: node.id });
+      return;
+    }
 
     switch (e.key) {
       case 'Enter': {
@@ -151,12 +174,10 @@ const OutlineTree: React.FC = () => {
         setEditingId(node.id);
         break;
       }
-      case 'Tab': {
-        e.preventDefault();
-        if (e.shiftKey) {
-          dispatch({ type: 'OUTDENT_NODE', payload: node.id });
-        } else {
-          dispatch({ type: 'INDENT_NODE', payload: node.id });
+      case ']': {
+        if (e.ctrlKey) {
+          e.preventDefault();
+          dispatch({ type: 'INDENT_SUBTREE', payload: node.id });
         }
         break;
       }
@@ -182,6 +203,26 @@ const OutlineTree: React.FC = () => {
         }
         break;
       }
+    }
+  };
+
+  const handleContainerKeyUp = (e: React.KeyboardEvent) => {
+    if (editingId) return;
+    if (e.key !== 'Tab') return;
+
+    const { pressed, chordUsed, shift } = tabGestureRef.current;
+    if (!pressed) return;
+
+    tabGestureRef.current.pressed = false;
+    tabGestureRef.current.chordUsed = false;
+
+    const active = visibleNodes.find(n => n.id === activeNodeId);
+    if (!active || chordUsed) return;
+
+    if (shift) {
+      dispatch({ type: 'OUTDENT_NODE', payload: active.id });
+    } else {
+      dispatch({ type: 'INDENT_NODE', payload: active.id });
     }
   };
 
@@ -269,10 +310,11 @@ const OutlineTree: React.FC = () => {
 
   return (
     <div 
-        className="flex-1 overflow-y-auto pb-0 bg-white dark:bg-zinc-900 outline-none transition-colors" 
+        className="flex-1 overflow-y-auto pb-0 bg-white dark:bg-zinc-950 outline-none transition-colors" 
         ref={listRef} 
         tabIndex={0} // Make container focusable
         onKeyDown={handleContainerKeyDown}
+        onKeyUp={handleContainerKeyUp}
         onClick={(e) => {
             // Ensure clicking empty space focuses the list so keyboard works immediately
             if (e.target === listRef.current) {
@@ -315,7 +357,9 @@ const OutlineTree: React.FC = () => {
               ${borderTopClass} ${borderBottomClass}
             `}
             style={{ height: '36px', zIndex: isMenuOpen ? 50 : 'auto' }}
-            onClick={() => {
+            onClick={(e) => {
+                // Keep text input focused while editing so single click places caret.
+                if ((e.target as HTMLElement).closest('input')) return;
                 dispatch({ type: 'SET_ACTIVE_NODE', payload: node.id });
                 listRef.current?.focus();
             }}
@@ -410,6 +454,8 @@ const OutlineTree: React.FC = () => {
                                 onChange={(e) => handleTextChange(node.id, e.target.value)}
                                 onKeyDown={handleInputKeyDown}
                                 onBlur={() => setEditingId(null)}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
                                 className="bg-white dark:bg-zinc-800 border border-blue-400 rounded-sm flex-1 focus:outline-none text-sm font-medium text-gray-900 dark:text-gray-100 px-1 py-0.5 min-w-[50px]"
                                 placeholder="Untitled"
                             />

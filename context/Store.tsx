@@ -16,6 +16,7 @@ interface State {
     createdAt: string;
     lastModified: string;
     lastExported?: string;
+    lastVersionBackupAt?: string;
   };
   ui: {
     isMobile: boolean;
@@ -134,7 +135,8 @@ const getInitialState = (): State => {
         contentMap: { ...parsed.contentMap, root: parsed.contentMap.root || '' },
         metadata: {
             ...parsed.metadata,
-            lastExported: parsed.metadata?.lastExported || parsed.metadata?.createdAt || now
+            lastExported: parsed.metadata?.lastExported || parsed.metadata?.createdAt || now,
+            lastVersionBackupAt: parsed.metadata?.lastVersionBackupAt
         }
       };
     } catch (e) {
@@ -157,6 +159,7 @@ type Action =
   | { type: 'INSERT_NODE'; payload: { targetId: string; position: 'before' | 'after' } }
   | { type: 'DELETE_NODE'; payload: string }
   | { type: 'INDENT_NODE'; payload: string }
+  | { type: 'INDENT_SUBTREE'; payload: string }
   | { type: 'OUTDENT_NODE'; payload: string }
   | { type: 'MOVE_NODE'; payload: { sourceId: string; targetId: string; position: 'top' | 'bottom' } }
   | { type: 'EXTRACT_PROJECT'; payload: string }
@@ -174,6 +177,7 @@ type Action =
   | { type: 'TOGGLE_AUTO_BACKUP_ON_SAVE_VERSION'; payload?: boolean }
   | { type: 'SET_LAYOUT_MODE'; payload: LayoutMode }
   | { type: 'UPDATE_LAST_EXPORTED' }
+  | { type: 'MARK_VERSION_BACKUP' }
   | { type: 'SAVE_VERSION' }
   | { type: 'ROLLBACK_VERSION'; payload: string };
 
@@ -349,6 +353,27 @@ const reducer = (state: State, action: Action): State => {
         return { ...state, nodes: newNodes, metadata: { ...state.metadata, lastModified: now } };
       }
       return state;
+    }
+
+    case 'INDENT_SUBTREE': {
+      const idx = state.nodes.findIndex(n => n.id === action.payload);
+      if (idx <= 0) return state;
+
+      const current = state.nodes[idx];
+      const prev = state.nodes[idx - 1];
+      if (current.depth >= prev.depth + 1) return state;
+
+      const newNodes = [...state.nodes];
+      let end = idx + 1;
+      while (end < newNodes.length && newNodes[end].depth > current.depth) {
+        end++;
+      }
+
+      for (let i = idx; i < end; i++) {
+        newNodes[i] = { ...newNodes[i], depth: newNodes[i].depth + 1, lastModified: now };
+      }
+
+      return { ...state, nodes: newNodes, metadata: { ...state.metadata, lastModified: now } };
     }
 
     case 'OUTDENT_NODE': {
@@ -588,15 +613,21 @@ const reducer = (state: State, action: Action): State => {
             }
         };
 
-    case 'SET_LAYOUT_MODE':
-        return { ...state, layoutMode: action.payload };
-
     case 'UPDATE_LAST_EXPORTED':
         return {
             ...state,
             metadata: {
                 ...state.metadata,
                 lastExported: now
+            }
+        };
+
+    case 'MARK_VERSION_BACKUP':
+        return {
+            ...state,
+            metadata: {
+                ...state.metadata,
+                lastVersionBackupAt: now
             }
         };
 

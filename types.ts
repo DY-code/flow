@@ -29,6 +29,7 @@ export interface ProjectData {
     createdAt: string;
     lastModified: string;
     lastExported?: string; // ISO Timestamp of last export
+    lastVersionBackupAt?: string; // ISO Timestamp of last version backup
   };
   ui?: {
     showOutlineDetails?: boolean;

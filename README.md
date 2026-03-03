@@ -18,3 +18,12 @@ View your app in AI Studio: https://ai.studio/apps/drive/1HvZqNv9hRVdaVh1N7hyUZ5
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## PWA desktop install (standalone/offline)
+
+Do not install the PWA from `npm run dev`.
+
+1. Build and run the production preview server:
+   `npm run pwa:start`
+2. Open `http://localhost:4173`
+3. Install to desktop from the browser address bar/menu

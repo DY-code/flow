@@ -66,6 +66,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
   const { state, dispatch } = useStore();
   const { contentMap, nodes, ui } = state;
   const [isPreview, setIsPreview] = useState(false);
+  const [isPreviewOutlineOpen, setIsPreviewOutlineOpen] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   
   // File Input for Import
@@ -647,6 +648,27 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
     return all.filter(item => item.level <= 3).slice(0, 24);
   }, [previewMarkdown]);
 
+  const previewHotzoneRef = useRef<HTMLDivElement>(null);
+  const previewOutlinePanelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isPreview || previewHeadings.length === 0) {
+      setIsPreviewOutlineOpen(false);
+    }
+  }, [isPreview, previewHeadings.length]);
+
+  const handlePreviewHotzoneLeave = (e: React.MouseEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && previewOutlinePanelRef.current?.contains(next)) return;
+    setIsPreviewOutlineOpen(false);
+  };
+
+  const handlePreviewPanelLeave = (e: React.MouseEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && previewHotzoneRef.current?.contains(next)) return;
+    setIsPreviewOutlineOpen(false);
+  };
+
   const handleOutlineJump = useCallback((domIndex: number) => {
     const container = previewScrollRef.current;
     if (!container) return;
@@ -698,23 +720,38 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
       </div>
 
       {isPreview && previewHeadings.length > 0 && (
-        <aside className="hidden xl:block absolute right-4 top-1/2 -translate-y-1/2 z-20 pointer-events-none">
-          <div className="pointer-events-auto w-52 rounded-lg border border-gray-100 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/85 backdrop-blur-sm px-3 py-2 shadow-sm">
-            <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 dark:text-zinc-500 mb-2">Outline</div>
-            <div className="space-y-1 max-h-[60vh] overflow-auto">
-              {previewHeadings.map((item) => (
-                <button
-                  key={`${item.domIndex}-${item.text}`}
-                  onClick={() => handleOutlineJump(item.domIndex)}
-                  className={`block w-full text-left text-xs leading-5 text-gray-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 truncate ${item.level === 1 ? '' : item.level === 2 ? 'pl-2' : 'pl-4'}`}
-                  title={item.text}
-                >
-                  {item.text}
-                </button>
-              ))}
-            </div>
-          </div>
-        </aside>
+        <>
+          <div
+            ref={previewHotzoneRef}
+            className="hidden xl:block absolute right-0 top-0 bottom-0 w-6 z-20"
+            onMouseEnter={() => setIsPreviewOutlineOpen(true)}
+            onMouseLeave={handlePreviewHotzoneLeave}
+          />
+          {isPreviewOutlineOpen && (
+            <aside
+              ref={previewOutlinePanelRef}
+              className="hidden xl:block absolute right-4 top-1/2 -translate-y-1/2 z-30"
+              onMouseEnter={() => setIsPreviewOutlineOpen(true)}
+              onMouseLeave={handlePreviewPanelLeave}
+            >
+              <div className="w-52 rounded-lg border border-gray-100 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/85 backdrop-blur-sm px-3 py-2 shadow-sm">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 dark:text-zinc-500 mb-2">Outline</div>
+                <div className="space-y-1 max-h-[60vh] overflow-auto">
+                  {previewHeadings.map((item) => (
+                    <button
+                      key={`${item.domIndex}-${item.text}`}
+                      onClick={() => handleOutlineJump(item.domIndex)}
+                      className={`block w-full text-left text-xs leading-5 text-gray-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 truncate ${item.level === 1 ? '' : item.level === 2 ? 'pl-2' : 'pl-4'}`}
+                      title={item.text}
+                    >
+                      {item.text}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </aside>
+          )}
+        </>
       )}
 
       <div ref={previewScrollRef} className="flex-1 overflow-y-auto relative flex flex-col">
@@ -722,32 +759,34 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
             // --- ROOT MODE ---
             isPreview ? (
                 <div className="w-full h-full p-8">
-                    <div className="mx-auto w-full max-w-5xl xl:pr-64">
+                    <div className="mx-auto w-full max-w-4xl">
                         <article className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert">
                             <Markdown rehypePlugins={[rehypeRaw]}>{rootDisplayContent || '*No content*'}</Markdown>
                         </article>
                     </div>
                 </div>
             ) : (
-                <div className="flex-1 p-8 prism-editor-wrapper">
-                    <Editor
-                        key={isRootFocusDisplay ? `root-focus-${focusedNode?.id || 'none'}` : 'root-global'}
-                        value={rootDisplayContent}
-                        textareaId={rootTextareaId}
-                        onValueChange={isRootFocusDisplay ? handleFocusedBodyChange : handleRawChange}
-                        onBlur={handleEditorBlur}
-                        highlight={highlightWithPrism}
-                        padding={0}
-                        onKeyDown={handleKeyDown}
-                        className="font-mono text-lg text-gray-800 dark:text-gray-200 min-h-[400px]"
-                        textareaClassName="focus:outline-none"
-                        style={editorStyle}
-                    />
+                <div className="w-full min-h-full p-8 mx-auto max-w-4xl">
+                    <div className="prism-editor-wrapper h-full">
+                        <Editor
+                            key={isRootFocusDisplay ? `root-focus-${focusedNode?.id || 'none'}` : 'root-global'}
+                            value={rootDisplayContent}
+                            textareaId={rootTextareaId}
+                            onValueChange={isRootFocusDisplay ? handleFocusedBodyChange : handleRawChange}
+                            onBlur={handleEditorBlur}
+                            highlight={highlightWithPrism}
+                            padding={0}
+                            onKeyDown={handleKeyDown}
+                            className="font-mono text-lg text-gray-800 dark:text-gray-200 min-h-[400px]"
+                            textareaClassName="focus:outline-none"
+                            style={editorStyle}
+                        />
+                    </div>
                 </div>
             )
         ) : (
             // --- NODE MODE ---
-            <div className={`flex flex-col min-h-full p-8 mx-auto w-full ${isPreview ? 'max-w-5xl xl:pr-64' : 'max-w-4xl'}`}>
+            <div className="flex flex-col min-h-full p-8 mx-auto w-full max-w-4xl">
                 
                 {/* Header Section */}
                 <div className="mb-2 flex items-end justify-between gap-4">

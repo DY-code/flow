@@ -47,7 +47,7 @@ const FocusArea: React.FC = () => {
     const breadcrumbs = getBreadcrumbs();
 
     return (
-        <div className="h-full w-full bg-gray-50 dark:bg-zinc-900 flex flex-col transition-colors">
+        <div className="h-full w-full bg-gray-50 dark:bg-zinc-950 flex flex-col transition-colors">
             {/* Header for Focus Area */}
             <div className="h-8 bg-gray-100 dark:bg-zinc-800 border-b border-gray-200 dark:border-zinc-700 flex items-center px-3 justify-between flex-shrink-0 transition-colors group">
                 {state.focusedNodeId ? (
@@ -135,17 +135,25 @@ const ResearchLogApp: React.FC = () => {
   const projectNameInputRef = useRef<HTMLInputElement>(null);
 
   // Unsaved Changes Logic
+  const lastModifiedTs = new Date(state.metadata.lastModified).getTime();
+  const lastExportedTs = state.metadata.lastExported ? new Date(state.metadata.lastExported).getTime() : 0;
+  const lastVersionBackupTs = state.metadata.lastVersionBackupAt ? new Date(state.metadata.lastVersionBackupAt).getTime() : 0;
+  const lastChangeEventTs = Math.max(lastExportedTs, lastVersionBackupTs);
+
   const hasUnsavedChanges = (() => {
     // 1. If nodes are empty or single empty node (initial state), consider saved.
     const isInitialEmpty = state.nodes.length === 1 && !state.nodes[0].text && !state.nodes[0].desc && !state.contentMap[state.nodes[0].id].replace('# \n\n', '').trim();
     if (isInitialEmpty && !state.contentMap['root']) return false;
 
-    // 2. Check timestamps
-    const lastModified = new Date(state.metadata.lastModified).getTime();
-    const lastExported = state.metadata.lastExported ? new Date(state.metadata.lastExported).getTime() : 0;
-    
-    // Allow a small grace period (e.g., 100ms) to avoid race conditions between render/save
-    return lastModified > lastExported + 100; 
+    // 2. Compare edits against the latest change event (export or version backup)
+    // Allow a small grace period (100ms) to avoid race conditions.
+    return lastModifiedTs > lastChangeEventTs + 100;
+  })();
+
+  const hasCurrentVersionBackup = (() => {
+    if (!lastVersionBackupTs) return false;
+    // Yellow when not orange and version backup is newer than export.
+    return !hasUnsavedChanges && lastVersionBackupTs > lastExportedTs + 100;
   })();
 
   // Close interceptor
@@ -369,8 +377,10 @@ const ResearchLogApp: React.FC = () => {
                         )}
                         {/* Status Indicator */}
                         <div 
-                            className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${hasUnsavedChanges ? 'bg-orange-500 animate-pulse' : 'bg-green-500'}`} 
-                            title={hasUnsavedChanges ? "Unexported changes" : "All changes exported"}
+                            className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                                hasUnsavedChanges ? 'bg-orange-500 animate-pulse' : hasCurrentVersionBackup ? 'bg-yellow-400' : 'bg-green-500'
+                            }`} 
+                            title={hasUnsavedChanges ? "Unexported changes" : hasCurrentVersionBackup ? "Current version backed up in Version History" : "All changes exported"}
                         />
                     </div>
                     <span className="text-[9px] text-gray-400 dark:text-gray-500 font-mono pl-0.5 hidden sm:block">LOCAL STORAGE</span>
@@ -517,7 +527,7 @@ const ResearchLogApp: React.FC = () => {
                 // Mobile Layout (Drawer logic)
                 <div className="relative h-full w-full">
                     {/* Drawer is shown if NOT in editor mode */}
-                    <div className={`fixed inset-y-0 left-0 z-40 w-3/4 bg-white dark:bg-zinc-900 shadow-2xl transform transition-transform duration-300 ${viewMode !== 'editor' ? 'translate-x-0' : '-translate-x-full'}`}>
+                    <div className={`fixed inset-y-0 left-0 z-40 w-3/4 bg-white dark:bg-zinc-950 shadow-2xl transform transition-transform duration-300 ${viewMode !== 'editor' ? 'translate-x-0' : '-translate-x-full'}`}>
                         <FocusArea />
                     </div>
                     {viewMode !== 'editor' && (

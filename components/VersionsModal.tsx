@@ -41,26 +41,18 @@ const VersionsModal: React.FC = () => {
           </span>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => dispatch({ type: 'TOGGLE_AUTO_BACKUP_ON_SAVE_VERSION' })}
-              className={`text-[10px] font-medium px-2 py-1 rounded border transition-colors ${ui.autoBackupOnSaveVersion ? 'text-gray-700 dark:text-gray-200 border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/70' : 'text-gray-400 dark:text-zinc-500 border-gray-100 dark:border-zinc-800'}`}
-              title="Auto download JSON when saving versions"
-            >
-              自动备份
-            </button>
-            <button
               onClick={async () => {
                 dispatch({ type: 'SAVE_VERSION' });
-                if (ui.autoBackupOnSaveVersion) {
-                  const data = {
-                    projectName: state.projectName,
-                    nodes: state.nodes,
-                    contentMap: state.contentMap,
-                    metadata: state.metadata,
-                    layoutMode: state.layoutMode,
-                    ui: state.ui
-                  };
-                  await downloadJsonDirect(data, `${getSafeFilename()}.json`);
-                }
+                const data = {
+                  projectName: state.projectName,
+                  nodes: state.nodes,
+                  contentMap: state.contentMap,
+                  metadata: state.metadata,
+                  layoutMode: state.layoutMode,
+                  ui: state.ui
+                };
+                await downloadJsonDirect(data, `${getSafeFilename()}.json`);
+                dispatch({ type: 'MARK_VERSION_BACKUP' });
               }}
               className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 rounded-md"
             >

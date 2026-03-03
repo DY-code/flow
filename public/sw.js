@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'flow-pwa-v1';
+const CACHE_VERSION = 'flow-pwa-v2';
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -11,10 +11,41 @@ const APP_SHELL_FILES = [
   '/offline.html'
 ];
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(APP_SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL_FILES))
+async function collectAssetsFromHtml() {
+  try {
+    const response = await fetch('/index.html', { cache: 'no-store' });
+    const html = await response.text();
+    const matches = [...html.matchAll(/(?:src|href)=["']([^"']+)["']/g)];
+    const sameOriginAssets = matches
+      .map((match) => match[1])
+      .filter((url) => url.startsWith('/') && !url.startsWith('//') && !url.includes('://'));
+    return [...new Set(sameOriginAssets)];
+  } catch {
+    return [];
+  }
+}
+
+async function warmCache(cacheName, urls) {
+  const cache = await caches.open(cacheName);
+  await Promise.allSettled(
+    urls.map(async (url) => {
+      try {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (response.ok) {
+          await cache.put(url, response);
+        }
+      } catch {
+        // Ignore a single asset failure to keep installation resilient.
+      }
+    })
   );
+}
+
+self.addEventListener('install', (event) => {
+  event.waitUntil((async () => {
+    const htmlAssets = await collectAssetsFromHtml();
+    await warmCache(APP_SHELL_CACHE, [...new Set([...APP_SHELL_FILES, ...htmlAssets])]);
+  })());
   self.skipWaiting();
 });
 
@@ -48,7 +79,9 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(async () => {
           const cachedPage = await caches.match(request);
-          return cachedPage || caches.match('/offline.html');
+          const shellPage = await caches.match('/index.html');
+          const offlinePage = await caches.match('/offline.html');
+          return cachedPage || shellPage || offlinePage;
         })
     );
     return;
