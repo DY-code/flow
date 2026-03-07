@@ -23,6 +23,7 @@ export interface ProjectData {
   projectName?: string; // Project Name
   nodes: LogNode[];
   contentMap: ContentMap;
+  focusedNodeId?: string | null;
   layoutMode: LayoutMode;
   metadata: {
     version: string;

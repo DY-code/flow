@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:git": "node server/git-backup-server.mjs",
+    "dev:all": "node server/dev-with-git.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "pwa:serve": "vite preview --host 0.0.0.0 --port 4173",

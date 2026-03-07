@@ -37,10 +37,16 @@ const MOBILE_THRESHOLD = 768;
 const DEFAULT_PROJECT_NAME = 'Untitled Project';
 const MAX_VERSIONS = 3;
 
+const resolveFocusedNodeId = (nodes: LogNode[], focusedNodeId?: string | null): string | null => {
+  if (!focusedNodeId) return null;
+  return nodes.some(node => node.id === focusedNodeId) ? focusedNodeId : null;
+};
+
 const buildProjectData = (state: State): ProjectData => ({
   projectName: state.projectName,
   nodes: state.nodes,
   contentMap: state.contentMap,
+  focusedNodeId: state.focusedNodeId,
   layoutMode: state.layoutMode,
   metadata: state.metadata,
   ui: {
@@ -108,16 +114,19 @@ const getInitialState = (): State => {
           initialViewMode = 'editor';
       }
 
+      const nodes: LogNode[] = parsed.nodes.map((n: any) => ({ 
+        ...n, 
+        desc: n.desc || '',
+        lastModified: n.lastModified || parsed.metadata?.lastModified || now
+      }));
+      const focusedNodeId = resolveFocusedNodeId(nodes, parsed.focusedNodeId);
+
       return {
         ...parsed,
         projectName: parsed.projectName || DEFAULT_PROJECT_NAME,
-        nodes: parsed.nodes.map((n: any) => ({ 
-            ...n, 
-            desc: n.desc || '',
-            lastModified: n.lastModified || parsed.metadata?.lastModified || now
-        })),
-        activeNodeId: parsed.nodes.length > 0 ? (parsed.activeNodeId || parsed.nodes[0].id) : null,
-        focusedNodeId: parsed.focusedNodeId || null, // Load or null
+        nodes,
+        activeNodeId: nodes.length > 0 ? (parsed.activeNodeId || nodes[0].id) : null,
+        focusedNodeId,
         versions: parsed.versions || [],
         layoutMode: parsed.layoutMode || 'horizontal',
         ui: { 
@@ -516,7 +525,8 @@ const reducer = (state: State, action: Action): State => {
         };
     }
 
-    case 'IMPORT_DATA':
+    case 'IMPORT_DATA': {
+      const importFocusedNodeId = resolveFocusedNodeId(action.payload.nodes, action.payload.focusedNodeId);
       return {
         ...state,
         projectName: action.payload.projectName || DEFAULT_PROJECT_NAME,
@@ -528,7 +538,7 @@ const reducer = (state: State, action: Action): State => {
             lastExported: now
         },
         activeNodeId: action.payload.nodes[0]?.id || null,
-        focusedNodeId: null, // Reset focus on import
+        focusedNodeId: importFocusedNodeId,
         versions: [],
         ui: { 
             ...state.ui, 
@@ -541,6 +551,7 @@ const reducer = (state: State, action: Action): State => {
             autoBackupOnSaveVersion: action.payload.ui?.autoBackupOnSaveVersion ?? false
         }
       };
+    }
 
     case 'RESET_PROJECT':
         return createEmptyState(state.ui.isMobile);

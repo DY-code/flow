@@ -1,17 +1,14 @@
 import React from 'react';
 import { useStore } from '../context/Store';
 import { formatDate } from '../utils/helpers';
-import { downloadJsonDirect, formatDateForFilename, sanitizeFilename } from '../utils/helpers';
 
-const VersionsModal: React.FC = () => {
+interface VersionsModalProps {
+  onSaveCurrentVersion: () => Promise<void>;
+}
+
+const VersionsModal: React.FC<VersionsModalProps> = ({ onSaveCurrentVersion }) => {
   const { state, dispatch } = useStore();
   const { ui, versions } = state;
-
-  const getSafeFilename = () => {
-    const name = sanitizeFilename(state.projectName || 'flow');
-    const dateStr = formatDateForFilename(new Date());
-    return `${name}_${dateStr}`;
-  };
 
   if (!ui.showVersions) return null;
 
@@ -41,19 +38,7 @@ const VersionsModal: React.FC = () => {
           </span>
           <div className="flex items-center gap-3">
             <button
-              onClick={async () => {
-                dispatch({ type: 'SAVE_VERSION' });
-                const data = {
-                  projectName: state.projectName,
-                  nodes: state.nodes,
-                  contentMap: state.contentMap,
-                  metadata: state.metadata,
-                  layoutMode: state.layoutMode,
-                  ui: state.ui
-                };
-                await downloadJsonDirect(data, `${getSafeFilename()}.json`);
-                dispatch({ type: 'MARK_VERSION_BACKUP' });
-              }}
+              onClick={() => void onSaveCurrentVersion()}
               className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 rounded-md"
             >
               Save Current Version

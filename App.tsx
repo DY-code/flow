@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { StoreProvider, useStore } from './context/Store';
 import OutlineTree from './components/OutlineTree';
 import Editor from './components/Editor';
@@ -11,7 +11,7 @@ import {
     IconSun, IconMoon, IconViewSplit, IconViewEditor, IconViewOutline,
     IconHome, IconChevronRight, IconChevronDown, IconGitCommit, IconMinus
 } from './components/Icons';
-import { downloadJson, downloadMarkdown } from './utils/helpers';
+import { downloadJson, downloadJsonDirect, downloadMarkdown, formatDateForFilename, sanitizeFilename } from './utils/helpers';
 import { ProjectData, LogNode } from './types';
 
 // --- Extracted Components for Stability ---
@@ -119,6 +119,12 @@ const DetailArea: React.FC = () => {
 const ResearchLogApp: React.FC = () => {
   const { state, dispatch } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const REPO_URL_STORAGE_KEY = 'flow-github-repo-url';
+  const PROXY_ENABLED_STORAGE_KEY = 'flow-github-proxy-enabled';
+  const HTTP_PROXY_STORAGE_KEY = 'flow-github-http-proxy';
+  const HTTPS_PROXY_STORAGE_KEY = 'flow-github-https-proxy';
+  const DEFAULT_HTTP_PROXY = 'http://127.0.0.1:7890';
+  const DEFAULT_HTTPS_PROXY = 'http://127.0.0.1:7890';
   
   const viewMode = state.ui.viewMode;
   const isMobile = state.ui.isMobile;
@@ -127,6 +133,15 @@ const ResearchLogApp: React.FC = () => {
   // Export Menu State
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [isGitPushModalOpen, setIsGitPushModalOpen] = useState(false);
+  const [gitRepoUrl, setGitRepoUrl] = useState('');
+  const [proxyEnabled, setProxyEnabled] = useState(false);
+  const [httpProxy, setHttpProxy] = useState(DEFAULT_HTTP_PROXY);
+  const [httpsProxy, setHttpsProxy] = useState(DEFAULT_HTTPS_PROXY);
+  const [gitPushStatus, setGitPushStatus] = useState<{ type: 'idle' | 'loading' | 'testing' | 'success' | 'error'; message: string }>({
+    type: 'idle',
+    message: ''
+  });
   
   // New Project Menu State
   const [isNewProjectMenuOpen, setIsNewProjectMenuOpen] = useState(false);
@@ -194,6 +209,13 @@ const ResearchLogApp: React.FC = () => {
     }
   }, [isEditingProjectName]);
 
+  useEffect(() => {
+    setGitRepoUrl(localStorage.getItem(REPO_URL_STORAGE_KEY) || '');
+    setProxyEnabled(localStorage.getItem(PROXY_ENABLED_STORAGE_KEY) === 'true');
+    setHttpProxy(localStorage.getItem(HTTP_PROXY_STORAGE_KEY) || DEFAULT_HTTP_PROXY);
+    setHttpsProxy(localStorage.getItem(HTTPS_PROXY_STORAGE_KEY) || DEFAULT_HTTPS_PROXY);
+  }, []);
+
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -234,15 +256,44 @@ const ResearchLogApp: React.FC = () => {
       return `${name}_${dateStr}`;
   };
 
-  const handleExportJson = async () => {
-    const data: ProjectData = {
-        projectName: state.projectName,
-        nodes: state.nodes,
-        contentMap: state.contentMap,
-        metadata: state.metadata,
-        layoutMode: state.layoutMode,
-        ui: state.ui
+  const buildProjectData = (): ProjectData => ({
+      projectName: state.projectName,
+      nodes: state.nodes,
+      contentMap: state.contentMap,
+      focusedNodeId: state.focusedNodeId,
+      metadata: state.metadata,
+      layoutMode: state.layoutMode,
+      ui: state.ui
+  });
+
+  const getVersionBackupFilename = () => {
+      const name = sanitizeFilename(state.projectName || 'flow');
+      const dateStr = formatDateForFilename(new Date());
+      return `${name}_${dateStr}.json`;
+  };
+
+  const handleSaveCurrentVersion = useCallback(async () => {
+      dispatch({ type: 'SAVE_VERSION' });
+      await downloadJsonDirect(buildProjectData(), getVersionBackupFilename());
+      dispatch({ type: 'MARK_VERSION_BACKUP' });
+  }, [dispatch, state.projectName, state.nodes, state.contentMap, state.metadata, state.layoutMode, state.ui]);
+
+  useEffect(() => {
+    const handleVersionSaveShortcut = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      if ((!e.ctrlKey && !e.metaKey) || !e.shiftKey || e.altKey) return;
+      if (e.key.toLowerCase() !== 's') return;
+
+      e.preventDefault();
+      void handleSaveCurrentVersion();
     };
+
+    window.addEventListener('keydown', handleVersionSaveShortcut);
+    return () => window.removeEventListener('keydown', handleVersionSaveShortcut);
+  }, [handleSaveCurrentVersion]);
+
+  const handleExportJson = async () => {
+    const data: ProjectData = buildProjectData();
     const saved = await downloadJson(data, `${getSafeFilename()}.json`);
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
@@ -251,19 +302,135 @@ const ResearchLogApp: React.FC = () => {
   };
 
   const handleExportMarkdown = async () => {
-    const data: ProjectData = {
-        projectName: state.projectName,
-        nodes: state.nodes,
-        contentMap: state.contentMap,
-        metadata: state.metadata,
-        layoutMode: state.layoutMode,
-        ui: state.ui
-    };
+    const data: ProjectData = buildProjectData();
     const saved = await downloadMarkdown(data, `${getSafeFilename()}.md`);
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     }
     setIsExportMenuOpen(false);
+  };
+
+  const handleOpenGitPushModal = () => {
+    setIsExportMenuOpen(false);
+    setGitPushStatus({ type: 'idle', message: '' });
+    setIsGitPushModalOpen(true);
+  };
+
+  const isValidHttpProxyUrl = (value: string): boolean => /^https?:\/\/.+/i.test(value.trim());
+
+  const validateProxySettings = (): string | null => {
+    if (!proxyEnabled) return null;
+    if (!isValidHttpProxyUrl(httpProxy)) return 'HTTP 代理地址格式无效，请使用 http:// 或 https:// 开头。';
+    if (!isValidHttpProxyUrl(httpsProxy)) return 'HTTPS 代理地址格式无效，请使用 http:// 或 https:// 开头。';
+    return null;
+  };
+
+  const persistGitSettings = (repoUrl: string) => {
+    localStorage.setItem(REPO_URL_STORAGE_KEY, repoUrl);
+    localStorage.setItem(PROXY_ENABLED_STORAGE_KEY, String(proxyEnabled));
+    localStorage.setItem(HTTP_PROXY_STORAGE_KEY, httpProxy.trim() || DEFAULT_HTTP_PROXY);
+    localStorage.setItem(HTTPS_PROXY_STORAGE_KEY, httpsProxy.trim() || DEFAULT_HTTPS_PROXY);
+  };
+
+  const buildProxyPayload = () => ({
+    proxyEnabled,
+    httpProxy: httpProxy.trim() || DEFAULT_HTTP_PROXY,
+    httpsProxy: httpsProxy.trim() || DEFAULT_HTTPS_PROXY
+  });
+
+  const handlePushToGithub = async () => {
+    const repoUrl = gitRepoUrl.trim();
+    if (!repoUrl) {
+        setGitPushStatus({ type: 'error', message: '请先填写 GitHub 仓库地址。' });
+        return;
+    }
+    const proxyValidationError = validateProxySettings();
+    if (proxyValidationError) {
+        setGitPushStatus({ type: 'error', message: proxyValidationError });
+        return;
+    }
+
+    persistGitSettings(repoUrl);
+    setGitPushStatus({ type: 'loading', message: `正在推送到 GitHub...（代理${proxyEnabled ? '已启用' : '未启用'}）` });
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 25000);
+
+    try {
+        const response = await fetch('/api/git/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+                repoUrl,
+                projectName: state.projectName,
+                projectData: buildProjectData(),
+                ...buildProxyPayload()
+            })
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result?.error || '推送失败');
+        }
+
+        dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+        setGitPushStatus({ type: 'success', message: result?.message || '推送成功。' });
+    } catch (error: any) {
+        const isTimeout = error?.name === 'AbortError';
+        setGitPushStatus({
+            type: 'error',
+            message: isTimeout ? '推送超时，请检查本地 git 服务、网络或凭据配置。' : (error?.message || '推送失败，请检查 git 凭据和网络连接。')
+        });
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+  };
+
+  const handleTestGithubConnection = async () => {
+    const repoUrl = gitRepoUrl.trim();
+    if (!repoUrl) {
+        setGitPushStatus({ type: 'error', message: '请先填写 GitHub 仓库地址。' });
+        return;
+    }
+    const proxyValidationError = validateProxySettings();
+    if (proxyValidationError) {
+        setGitPushStatus({ type: 'error', message: proxyValidationError });
+        return;
+    }
+
+    persistGitSettings(repoUrl);
+    setGitPushStatus({ type: 'testing', message: `正在测试连接...（代理${proxyEnabled ? '已启用' : '未启用'}）` });
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+
+    try {
+        const response = await fetch('/api/git/test-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+                repoUrl,
+                ...buildProxyPayload()
+            })
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result?.error || '连接测试失败');
+        }
+
+        setGitPushStatus({ type: 'success', message: result?.message || '连接成功。' });
+    } catch (error: any) {
+        const isTimeout = error?.name === 'AbortError';
+        setGitPushStatus({
+            type: 'error',
+            message: isTimeout ? '连接测试超时，请检查网络或凭据配置。' : (error?.message || '连接测试失败。')
+        });
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
   };
 
   // --- Logic for New Project with Backup Prompt ---
@@ -515,6 +682,7 @@ const ResearchLogApp: React.FC = () => {
                         <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-gray-100 dark:border-zinc-700 z-50">
                             <button onClick={handleExportJson} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700">Export as JSON</button>
                             <button onClick={handleExportMarkdown} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700">Export as Markdown</button>
+                            <button onClick={handleOpenGitPushModal} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700">推送到 GitHub</button>
                         </div>
                     )}
                 </div>
@@ -568,7 +736,109 @@ const ResearchLogApp: React.FC = () => {
         </div>
 
         <StatsModal />
-        <VersionsModal />
+        <VersionsModal onSaveCurrentVersion={handleSaveCurrentVersion} />
+        {isGitPushModalOpen && (
+            <div className="fixed inset-0 bg-black/40 z-[80] flex items-center justify-center p-4" onClick={() => setIsGitPushModalOpen(false)}>
+                <div
+                    className="w-full max-w-xl rounded-xl bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-700 shadow-2xl"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-700 flex items-center justify-between">
+                        <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">推送到 GitHub</h3>
+                        <button
+                            onClick={() => setIsGitPushModalOpen(false)}
+                            className="text-sm px-2 py-1 rounded text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800"
+                        >
+                            关闭
+                        </button>
+                    </div>
+                    <div className="px-5 py-4 space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">仓库地址</label>
+                            <input
+                                type="text"
+                                value={gitRepoUrl}
+                                onChange={(e) => setGitRepoUrl(e.target.value)}
+                                placeholder="https://github.com/your-name/your-repo.git"
+                                className="w-full rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-blue-500/30"
+                            />
+                            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                点击“开始推送”会自动保存仓库地址到本地浏览器，并固定推送到 main 分支。
+                            </p>
+                        </div>
+                        <div className="rounded-lg border border-gray-200 dark:border-zinc-700 p-3 space-y-3">
+                            <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+                                <input
+                                    type="checkbox"
+                                    checked={proxyEnabled}
+                                    onChange={(e) => setProxyEnabled(e.target.checked)}
+                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                启用代理（仅本应用推送生效）
+                            </label>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">HTTP Proxy</label>
+                                <input
+                                    type="text"
+                                    value={httpProxy}
+                                    onChange={(e) => setHttpProxy(e.target.value)}
+                                    placeholder={DEFAULT_HTTP_PROXY}
+                                    disabled={!proxyEnabled}
+                                    className="w-full rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-blue-500/30 disabled:opacity-60"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">HTTPS Proxy</label>
+                                <input
+                                    type="text"
+                                    value={httpsProxy}
+                                    onChange={(e) => setHttpsProxy(e.target.value)}
+                                    placeholder={DEFAULT_HTTPS_PROXY}
+                                    disabled={!proxyEnabled}
+                                    className="w-full rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-blue-500/30 disabled:opacity-60"
+                                />
+                            </div>
+                        </div>
+                        <div className="rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/60 px-3 py-2">
+                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">状态</p>
+                            <p
+                                className={`text-sm ${
+                                    gitPushStatus.type === 'error'
+                                        ? 'text-red-600 dark:text-red-400'
+                                        : gitPushStatus.type === 'success'
+                                        ? 'text-green-600 dark:text-green-400'
+                                        : 'text-gray-700 dark:text-gray-200'
+                                }`}
+                            >
+                                {gitPushStatus.message || '等待开始推送。'}
+                            </p>
+                        </div>
+                    </div>
+                    <div className="px-5 py-4 border-t border-gray-200 dark:border-zinc-700 flex items-center justify-end gap-2">
+                        <button
+                            onClick={() => setIsGitPushModalOpen(false)}
+                            className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-zinc-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-800"
+                        >
+                            取消
+                        </button>
+                        <button
+                            onClick={handleTestGithubConnection}
+                            disabled={gitPushStatus.type === 'loading' || gitPushStatus.type === 'testing'}
+                            className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-zinc-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-800 disabled:opacity-60"
+                        >
+                            {gitPushStatus.type === 'testing' ? '测试中...' : '测试连接'}
+                        </button>
+                        <button
+                            onClick={handlePushToGithub}
+                            disabled={gitPushStatus.type === 'loading' || gitPushStatus.type === 'testing'}
+                            className="px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+                        >
+                            {gitPushStatus.type === 'loading' ? '推送中...' : '开始推送'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
       </div>
     </div>
   );
