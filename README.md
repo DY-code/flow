@@ -53,9 +53,7 @@ Flow is a local-first tool for complex thinking and long-running projects, turni
    ```bash
    npm install
    ```
-2. 在 `.env.local` 设置 `GEMINI_API_KEY`（如需相关能力）  
-   Set `GEMINI_API_KEY` in `.env.local` (if required by your workflow).
-3. 启动开发环境 / Start dev server
+2. 启动开发环境 / Start dev server
    ```bash
    npm run dev
    ```
