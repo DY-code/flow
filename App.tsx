@@ -84,6 +84,14 @@ const FocusArea: React.FC = () => {
                         <IconMinus className="w-3 h-3" />
                         <span className="hidden sm:inline">{state.ui.hideOnHold ? '显示搁置' : '隐藏搁置'}</span>
                     </button>
+                    <button
+                        onClick={() => dispatch({ type: 'TOGGLE_NODE_TEMPLATE' })}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        title={state.ui.useNodeTemplate ? 'Disable New Node Template' : 'Enable New Node Template'}
+                    >
+                        <IconFilePlus className="w-3 h-3" />
+                        <span className="hidden sm:inline">{state.ui.useNodeTemplate ? '模板开启' : '模板关闭'}</span>
+                    </button>
                 </div>
             </div>
             

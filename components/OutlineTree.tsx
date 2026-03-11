@@ -76,8 +76,26 @@ const OutlineTree: React.FC = () => {
     }
 
     // 1.5 Hide On Hold Filter (Outline only)
+    // When enabled, hide an onHold node together with its entire subtree.
     if (ui.hideOnHold) {
-        filteredNodes = filteredNodes.filter(node => node.status !== 'onHold');
+        const holdFilteredNodes: LogNode[] = [];
+        let skipOnHoldSubtreeDepth: number | null = null;
+
+        filteredNodes.forEach(node => {
+            if (skipOnHoldSubtreeDepth !== null) {
+                if (node.depth > skipOnHoldSubtreeDepth) return;
+                skipOnHoldSubtreeDepth = null;
+            }
+
+            if (node.status === 'onHold') {
+                skipOnHoldSubtreeDepth = node.depth;
+                return;
+            }
+
+            holdFilteredNodes.push(node);
+        });
+
+        filteredNodes = holdFilteredNodes;
     }
 
     // 2. Collapse Filter

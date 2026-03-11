@@ -28,6 +28,7 @@ interface State {
     outlineMode: OutlineMode;
     hideOnHold: boolean;
     showFocusedRoot: boolean;
+    useNodeTemplate: boolean;
     autoBackupOnSaveVersion: boolean;
   };
 }
@@ -36,6 +37,15 @@ const STORAGE_KEY = 'flow-data';
 const MOBILE_THRESHOLD = 768; 
 const DEFAULT_PROJECT_NAME = 'Untitled Project';
 const MAX_VERSIONS = 3;
+const EMPTY_NODE_CONTENT = '# \n\n';
+const NEW_NODE_BODY_TEMPLATE = [
+  '- 问题/情景',
+  '- 原因/假设',
+  '- 目标',
+  '- 解决方案/行动',
+  '- 结果',
+  '- 下一步计划'
+].join('\n\n');
 
 const resolveFocusedNodeId = (nodes: LogNode[], focusedNodeId?: string | null): string | null => {
   if (!focusedNodeId) return null;
@@ -56,6 +66,7 @@ const buildProjectData = (state: State): ProjectData => ({
     outlineMode: state.ui.outlineMode,
     hideOnHold: state.ui.hideOnHold,
     showFocusedRoot: state.ui.showFocusedRoot,
+    useNodeTemplate: state.ui.useNodeTemplate,
     autoBackupOnSaveVersion: state.ui.autoBackupOnSaveVersion
   }
 });
@@ -72,7 +83,7 @@ const createEmptyState = (isMobile: boolean): State => {
     ],
     contentMap: {
       'root': '', 
-      [rootId]: '# \n\n' 
+      [rootId]: EMPTY_NODE_CONTENT
     },
     activeNodeId: rootId,
     focusedNodeId: null,
@@ -94,6 +105,7 @@ const createEmptyState = (isMobile: boolean): State => {
       outlineMode: 'tree',
       hideOnHold: false,
       showFocusedRoot: false,
+      useNodeTemplate: true,
       autoBackupOnSaveVersion: false
     }
   };
@@ -139,6 +151,7 @@ const getInitialState = (): State => {
             outlineMode: parsed.ui?.outlineMode || 'tree',
             hideOnHold: parsed.ui?.hideOnHold ?? false,
             showFocusedRoot: parsed.ui?.showFocusedRoot ?? false,
+            useNodeTemplate: parsed.ui?.useNodeTemplate ?? true,
             autoBackupOnSaveVersion: parsed.ui?.autoBackupOnSaveVersion ?? false
         },
         contentMap: { ...parsed.contentMap, root: parsed.contentMap.root || '' },
@@ -183,6 +196,7 @@ type Action =
   | { type: 'TOGGLE_OUTLINE_MODE' }
   | { type: 'TOGGLE_HIDE_ON_HOLD'; payload?: boolean }
   | { type: 'TOGGLE_ROOT_FOCUS_VIEW'; payload?: boolean }
+  | { type: 'TOGGLE_NODE_TEMPLATE'; payload?: boolean }
   | { type: 'TOGGLE_AUTO_BACKUP_ON_SAVE_VERSION'; payload?: boolean }
   | { type: 'SET_LAYOUT_MODE'; payload: LayoutMode }
   | { type: 'UPDATE_LAST_EXPORTED' }
@@ -295,7 +309,12 @@ const reducer = (state: State, action: Action): State => {
       return {
         ...state,
         nodes: newNodes,
-        contentMap: { ...state.contentMap, [newNode.id]: '# \n\n' },
+        contentMap: {
+          ...state.contentMap,
+          [newNode.id]: state.ui.useNodeTemplate
+            ? `${EMPTY_NODE_CONTENT}${NEW_NODE_BODY_TEMPLATE}\n`
+            : EMPTY_NODE_CONTENT
+        },
         activeNodeId: newNode.id,
         metadata: { ...state.metadata, lastModified: now }
       };
@@ -548,6 +567,7 @@ const reducer = (state: State, action: Action): State => {
             outlineMode: action.payload.ui?.outlineMode || 'tree',
             hideOnHold: action.payload.ui?.hideOnHold ?? false,
             showFocusedRoot: action.payload.ui?.showFocusedRoot ?? false,
+            useNodeTemplate: action.payload.ui?.useNodeTemplate ?? true,
             autoBackupOnSaveVersion: action.payload.ui?.autoBackupOnSaveVersion ?? false
         }
       };
@@ -610,6 +630,15 @@ const reducer = (state: State, action: Action): State => {
             ui: {
                 ...state.ui,
                 showFocusedRoot: action.payload !== undefined ? action.payload : !state.ui.showFocusedRoot
+            }
+        };
+
+    case 'TOGGLE_NODE_TEMPLATE':
+        return {
+            ...state,
+            ui: {
+                ...state.ui,
+                useNodeTemplate: action.payload !== undefined ? action.payload : !state.ui.useNodeTemplate
             }
         };
 
@@ -676,6 +705,7 @@ const reducer = (state: State, action: Action): State => {
                 outlineMode: data.ui?.outlineMode || state.ui.outlineMode,
                 hideOnHold: data.ui?.hideOnHold ?? state.ui.hideOnHold,
                 showFocusedRoot: data.ui?.showFocusedRoot ?? state.ui.showFocusedRoot,
+                useNodeTemplate: data.ui?.useNodeTemplate ?? state.ui.useNodeTemplate,
                 autoBackupOnSaveVersion: data.ui?.autoBackupOnSaveVersion ?? state.ui.autoBackupOnSaveVersion
             }
         };
@@ -714,6 +744,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         outlineMode: state.ui.outlineMode,
         hideOnHold: state.ui.hideOnHold,
         showFocusedRoot: state.ui.showFocusedRoot,
+        useNodeTemplate: state.ui.useNodeTemplate,
         autoBackupOnSaveVersion: state.ui.autoBackupOnSaveVersion
       } 
     };

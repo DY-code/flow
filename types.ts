@@ -39,6 +39,7 @@ export interface ProjectData {
     viewMode?: ViewMode; // Replaces sidebarVisible
     hideOnHold?: boolean;
     showFocusedRoot?: boolean;
+    useNodeTemplate?: boolean;
     autoBackupOnSaveVersion?: boolean;
   };
 }
