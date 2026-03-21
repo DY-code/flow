@@ -2,9 +2,11 @@ web端（多文件）
 
 使用gemini构建：https://aistudio.google.com/apps/drive/1HvZqNv9hRVdaVh1N7hyUZ5l2zhzstrDV?showPreview=true&showAssistant=true
 
-使用临时代理加速（windows cmd）：
-set HTTP_PROXY=http://127.0.0.1:7890
-set HTTPS_PROXY=http://127.0.0.1:7890
+使用临时代理加速
+
+ubuntu：
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
 
 使用git提交：
 git clone https://github.com/DY-code/flow.git
@@ -17,6 +19,8 @@ git push origin main
 github开放的注意事项：
 豆包会话：
 https://www.doubao.com/chat/38415994969659906
+
+codex无法正常连接：检查是否是绑定的工作空间不对
 
 ----
 
@@ -41,6 +45,7 @@ https://www.doubao.com/chat/38415994969659906
 
 （验证假设与猜想，debug）待验证/已证实/已证伪
 
+- 添加在思维流节点旁显示最新修改时间的选项
 - 模板文字改为：
 ### 问题/情景
 ### 原因/假设
@@ -59,6 +64,10 @@ https://www.doubao.com/chat/38415994969659906
 - （暂不考虑）添加同时开启多个页面，管理不同项目
 
 ---
+3.21：
+
+
+
 3.7：
 - 改进：隐藏搁置时，将“搁置”节点下属的子节点也一并隐藏
 - 改进：新建节点默认正文添加模板文字，并提供取消模板文字选项（放在“隐藏搁置”选项的右侧）
