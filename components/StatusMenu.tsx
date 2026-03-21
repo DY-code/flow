@@ -28,7 +28,7 @@ const StatusMenu: React.FC<Props> = ({ currentStatus, onChange, isOpen, onToggle
   const getIcon = (status: NodeStatus, className: string = "w-4 h-4") => {
     switch (status) {
       case 'waiting': return <IconSquare className={`${className} text-gray-400 dark:text-zinc-500`} />;
-      case 'inProgress': return <IconPlay className={`${className} text-blue-500`} />;
+      case 'inProgress': return <IconPlay className={`${className} text-[color:var(--flow-accent)]`} />;
       case 'completed': return <IconCheck className={`${className} text-green-500`} />;
       case 'onHold': return <IconMinus className={`${className} text-amber-500`} />;
     }

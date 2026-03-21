@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
-import { LogNode, ContentMap, ProjectData, VersionEntry, NodeStatus, LayoutMode, OutlineMode, ViewMode } from '../types';
+import { LogNode, ContentMap, ProjectData, VersionEntry, NodeStatus, LayoutMode, OutlineMode, ViewMode, BackgroundPreset } from '../types';
 import { generateId } from '../utils/helpers';
 
 // --- State Definition ---
@@ -9,6 +9,7 @@ interface State {
   contentMap: ContentMap;
   activeNodeId: string | null;
   focusedNodeId: string | null; // New: For Focus Mode
+  currentProjectPath: string | null;
   versions: VersionEntry[];
   layoutMode: LayoutMode;
   metadata: {
@@ -25,6 +26,8 @@ interface State {
     viewMode: ViewMode;
     showOutlineDetails: boolean;
     theme: 'light' | 'dark';
+    backgroundPreset: BackgroundPreset;
+    showNodeLastModified: boolean;
     outlineMode: OutlineMode;
     hideOnHold: boolean;
     showFocusedRoot: boolean;
@@ -38,31 +41,58 @@ const MOBILE_THRESHOLD = 768;
 const DEFAULT_PROJECT_NAME = 'Untitled Project';
 const MAX_VERSIONS = 3;
 const EMPTY_NODE_CONTENT = '# \n\n';
+const TASK_PLAN_PROJECT_PATH = 'global/任务计划.json';
 const NEW_NODE_BODY_TEMPLATE = [
-  '- 问题/情景',
-  '- 原因/假设',
-  '- 目标',
-  '- 解决方案/行动',
-  '- 结果',
-  '- 下一步计划'
-].join('\n\n');
+  '### 问题/情景',
+  '### 原因/假设',
+  '### 目标',
+  '### 解决方案/行动',
+  '### 结果',
+  '### 下一步计划'
+].join('\n');
 
 const resolveFocusedNodeId = (nodes: LogNode[], focusedNodeId?: string | null): string | null => {
   if (!focusedNodeId) return null;
   return nodes.some(node => node.id === focusedNodeId) ? focusedNodeId : null;
 };
 
+const resolveActiveNodeId = (nodes: LogNode[], activeNodeId?: string | null): string | null => {
+  if (!nodes.length) return null;
+  if (!activeNodeId) return nodes[0].id;
+  return nodes.some(node => node.id === activeNodeId) ? activeNodeId : nodes[0].id;
+};
+
+const getTodayDateString = () => {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const isTaskPlanProject = (projectPath?: string | null) => projectPath === TASK_PLAN_PROJECT_PATH;
+
+const buildNodeContent = (title: string, desc = '', body = '') => {
+  const formattedTitle = `# ${title}`;
+  const formattedDesc = desc ? `> ${desc}` : '';
+  return `${formattedTitle}\n${formattedDesc}\n${body}`;
+};
+
 const buildProjectData = (state: State): ProjectData => ({
   projectName: state.projectName,
   nodes: state.nodes,
   contentMap: state.contentMap,
+  activeNodeId: state.activeNodeId,
   focusedNodeId: state.focusedNodeId,
+  currentProjectPath: state.currentProjectPath,
   layoutMode: state.layoutMode,
   metadata: state.metadata,
   ui: {
     viewMode: state.ui.viewMode,
     showOutlineDetails: state.ui.showOutlineDetails,
     theme: state.ui.theme,
+    backgroundPreset: state.ui.backgroundPreset,
+    showNodeLastModified: state.ui.showNodeLastModified,
     outlineMode: state.ui.outlineMode,
     hideOnHold: state.ui.hideOnHold,
     showFocusedRoot: state.ui.showFocusedRoot,
@@ -87,6 +117,7 @@ const createEmptyState = (isMobile: boolean): State => {
     },
     activeNodeId: rootId,
     focusedNodeId: null,
+    currentProjectPath: null,
     versions: [],
     layoutMode: 'horizontal',
     metadata: {
@@ -102,6 +133,8 @@ const createEmptyState = (isMobile: boolean): State => {
       viewMode: 'split',
       showOutlineDetails: true,
       theme: 'light',
+      backgroundPreset: 'default',
+      showNodeLastModified: false,
       outlineMode: 'tree',
       hideOnHold: false,
       showFocusedRoot: false,
@@ -131,14 +164,16 @@ const getInitialState = (): State => {
         desc: n.desc || '',
         lastModified: n.lastModified || parsed.metadata?.lastModified || now
       }));
+      const activeNodeId = resolveActiveNodeId(nodes, parsed.activeNodeId);
       const focusedNodeId = resolveFocusedNodeId(nodes, parsed.focusedNodeId);
 
       return {
         ...parsed,
         projectName: parsed.projectName || DEFAULT_PROJECT_NAME,
         nodes,
-        activeNodeId: nodes.length > 0 ? (parsed.activeNodeId || nodes[0].id) : null,
+        activeNodeId,
         focusedNodeId,
+        currentProjectPath: parsed.currentProjectPath || null,
         versions: parsed.versions || [],
         layoutMode: parsed.layoutMode || 'horizontal',
         ui: { 
@@ -148,6 +183,8 @@ const getInitialState = (): State => {
             viewMode: initialViewMode,
             showOutlineDetails: parsed.ui?.showOutlineDetails ?? true,
             theme: parsed.ui?.theme || 'light',
+            backgroundPreset: parsed.ui?.backgroundPreset || 'default',
+            showNodeLastModified: parsed.ui?.showNodeLastModified ?? false,
             outlineMode: parsed.ui?.outlineMode || 'tree',
             hideOnHold: parsed.ui?.hideOnHold ?? false,
             showFocusedRoot: parsed.ui?.showFocusedRoot ?? false,
@@ -179,13 +216,13 @@ type Action =
   | { type: 'SET_STATUS'; payload: { id: string; status: NodeStatus } }
   | { type: 'TOGGLE_COLLAPSE'; payload: string }
   | { type: 'INSERT_NODE'; payload: { targetId: string; position: 'before' | 'after' } }
-  | { type: 'DELETE_NODE'; payload: string }
+  | { type: 'DELETE_NODE'; payload: { id: string; includeDescendants: boolean } }
   | { type: 'INDENT_NODE'; payload: string }
   | { type: 'INDENT_SUBTREE'; payload: string }
   | { type: 'OUTDENT_NODE'; payload: string }
   | { type: 'MOVE_NODE'; payload: { sourceId: string; targetId: string; position: 'top' | 'bottom' } }
   | { type: 'EXTRACT_PROJECT'; payload: string }
-  | { type: 'IMPORT_DATA'; payload: ProjectData }
+  | { type: 'IMPORT_DATA'; payload: { data: ProjectData; projectPath?: string | null } }
   | { type: 'RESET_PROJECT' }
   | { type: 'SET_MOBILE'; payload: boolean }
   | { type: 'TOGGLE_STATS'; payload: boolean }
@@ -193,6 +230,8 @@ type Action =
   | { type: 'SET_VIEW_MODE'; payload: ViewMode }
   | { type: 'TOGGLE_OUTLINE_DETAILS'; payload?: boolean }
   | { type: 'TOGGLE_THEME' }
+  | { type: 'SET_BACKGROUND_PRESET'; payload: BackgroundPreset }
+  | { type: 'TOGGLE_NODE_LAST_MODIFIED'; payload?: boolean }
   | { type: 'TOGGLE_OUTLINE_MODE' }
   | { type: 'TOGGLE_HIDE_ON_HOLD'; payload?: boolean }
   | { type: 'TOGGLE_ROOT_FOCUS_VIEW'; payload?: boolean }
@@ -292,9 +331,11 @@ const reducer = (state: State, action: Action): State => {
       if (insertIdx < 0) insertIdx = 0;
       if (insertIdx > state.nodes.length) insertIdx = state.nodes.length;
 
+      const useTaskPlanDefaults = isTaskPlanProject(state.currentProjectPath);
+      const defaultTitle = useTaskPlanDefaults ? `任务名 [${getTodayDateString()}]` : '';
       const newNode: LogNode = {
         id: generateId(),
-        text: '',
+        text: defaultTitle,
         desc: '',
         status: 'waiting',
         depth: newDepth,
@@ -305,15 +346,18 @@ const reducer = (state: State, action: Action): State => {
       
       const newNodes = [...state.nodes];
       newNodes.splice(insertIdx, 0, newNode);
+      const newNodeContent = useTaskPlanDefaults
+        ? buildNodeContent(defaultTitle)
+        : state.ui.useNodeTemplate
+          ? `${EMPTY_NODE_CONTENT}${NEW_NODE_BODY_TEMPLATE}\n`
+          : EMPTY_NODE_CONTENT;
       
       return {
         ...state,
         nodes: newNodes,
         contentMap: {
           ...state.contentMap,
-          [newNode.id]: state.ui.useNodeTemplate
-            ? `${EMPTY_NODE_CONTENT}${NEW_NODE_BODY_TEMPLATE}\n`
-            : EMPTY_NODE_CONTENT
+          [newNode.id]: newNodeContent
         },
         activeNodeId: newNode.id,
         metadata: { ...state.metadata, lastModified: now }
@@ -321,7 +365,8 @@ const reducer = (state: State, action: Action): State => {
     }
 
     case 'DELETE_NODE': {
-      const idx = state.nodes.findIndex(n => n.id === action.payload);
+      const { id, includeDescendants } = action.payload;
+      const idx = state.nodes.findIndex(n => n.id === id);
       if (idx === -1) return state;
       const targetNode = state.nodes[idx];
       
@@ -330,33 +375,33 @@ const reducer = (state: State, action: Action): State => {
         childEndIdx++;
       }
       
-      // Identify ids being deleted to check against focusedNodeId
-      const deletedIds = state.nodes.slice(idx, childEndIdx).map(n => n.id);
+      const deletedIds = includeDescendants
+        ? state.nodes.slice(idx, childEndIdx).map(n => n.id)
+        : [id];
       
       const processedNodes = [...state.nodes];
-      for (let i = idx + 1; i < childEndIdx; i++) {
-         processedNodes[i] = { ...processedNodes[i], depth: Math.max(0, processedNodes[i].depth - 1) };
+      if (!includeDescendants) {
+        for (let i = idx + 1; i < childEndIdx; i++) {
+          processedNodes[i] = { ...processedNodes[i], depth: Math.max(0, processedNodes[i].depth - 1) };
+        }
       }
       
-      processedNodes.splice(idx, 1);
+      processedNodes.splice(idx, includeDescendants ? childEndIdx - idx : 1);
       
       let newActiveId = state.activeNodeId;
-      if (state.activeNodeId === action.payload) {
+      if (deletedIds.includes(state.activeNodeId || '')) {
         newActiveId = processedNodes[Math.max(0, idx - 1)]?.id || (processedNodes.length > 0 ? processedNodes[0].id : null);
       }
 
-      // If the focused node (or its ancestor which was the focus root) is deleted, exit focus mode
       let newFocusedNodeId = state.focusedNodeId;
-      if (state.focusedNodeId && (state.focusedNodeId === action.payload || deletedIds.includes(state.focusedNodeId))) {
-          newFocusedNodeId = null;
-      }
-      // Also check if the *current* focusedNodeId was the one being deleted.
-      if (state.focusedNodeId === action.payload) {
-          newFocusedNodeId = null;
+      if (state.focusedNodeId && deletedIds.includes(state.focusedNodeId)) {
+        newFocusedNodeId = null;
       }
 
       const newContentMap = { ...state.contentMap };
-      delete newContentMap[action.payload];
+      deletedIds.forEach((deletedId) => {
+        delete newContentMap[deletedId];
+      });
 
       return {
         ...state,
@@ -532,6 +577,7 @@ const reducer = (state: State, action: Action): State => {
             projectName: targetNode.text || DEFAULT_PROJECT_NAME,
             nodes: newNodes,
             contentMap: newContentMap,
+            currentProjectPath: null,
             activeNodeId: newNodes[0].id,
             focusedNodeId: null, // Exit focus mode
             versions: [],
@@ -545,30 +591,35 @@ const reducer = (state: State, action: Action): State => {
     }
 
     case 'IMPORT_DATA': {
-      const importFocusedNodeId = resolveFocusedNodeId(action.payload.nodes, action.payload.focusedNodeId);
+      const data = action.payload.data;
+      const importActiveNodeId = resolveActiveNodeId(data.nodes, data.activeNodeId);
+      const importFocusedNodeId = resolveFocusedNodeId(data.nodes, data.focusedNodeId);
       return {
         ...state,
-        projectName: action.payload.projectName || DEFAULT_PROJECT_NAME,
-        nodes: action.payload.nodes,
-        contentMap: action.payload.contentMap,
-        layoutMode: action.payload.layoutMode || 'horizontal',
+        projectName: data.projectName || DEFAULT_PROJECT_NAME,
+        nodes: data.nodes,
+        contentMap: data.contentMap,
+        currentProjectPath: action.payload.projectPath ?? data.currentProjectPath ?? null,
+        layoutMode: data.layoutMode || 'horizontal',
         metadata: {
-            ...action.payload.metadata,
+            ...data.metadata,
             lastExported: now
         },
-        activeNodeId: action.payload.nodes[0]?.id || null,
+        activeNodeId: importActiveNodeId,
         focusedNodeId: importFocusedNodeId,
         versions: [],
         ui: { 
             ...state.ui, 
-            viewMode: action.payload.ui?.viewMode || ((action.payload.ui as any)?.sidebarVisible === false ? 'editor' : 'split'),
-            showOutlineDetails: action.payload.ui?.showOutlineDetails ?? true,
-            theme: action.payload.ui?.theme || 'light',
-            outlineMode: action.payload.ui?.outlineMode || 'tree',
-            hideOnHold: action.payload.ui?.hideOnHold ?? false,
-            showFocusedRoot: action.payload.ui?.showFocusedRoot ?? false,
-            useNodeTemplate: action.payload.ui?.useNodeTemplate ?? true,
-            autoBackupOnSaveVersion: action.payload.ui?.autoBackupOnSaveVersion ?? false
+            viewMode: data.ui?.viewMode || ((data.ui as any)?.sidebarVisible === false ? 'editor' : 'split'),
+            showOutlineDetails: data.ui?.showOutlineDetails ?? true,
+            theme: data.ui?.theme || 'light',
+            backgroundPreset: state.ui.backgroundPreset,
+            showNodeLastModified: state.ui.showNodeLastModified,
+            outlineMode: data.ui?.outlineMode || 'tree',
+            hideOnHold: data.ui?.hideOnHold ?? false,
+            showFocusedRoot: data.ui?.showFocusedRoot ?? false,
+            useNodeTemplate: data.ui?.useNodeTemplate ?? true,
+            autoBackupOnSaveVersion: data.ui?.autoBackupOnSaveVersion ?? false
         }
       };
     }
@@ -607,6 +658,21 @@ const reducer = (state: State, action: Action): State => {
         return {
             ...state,
             ui: { ...state.ui, theme: state.ui.theme === 'light' ? 'dark' : 'light' }
+        };
+
+    case 'SET_BACKGROUND_PRESET':
+        return {
+            ...state,
+            ui: { ...state.ui, backgroundPreset: action.payload }
+        };
+
+    case 'TOGGLE_NODE_LAST_MODIFIED':
+        return {
+            ...state,
+            ui: {
+                ...state.ui,
+                showNodeLastModified: action.payload !== undefined ? action.payload : !state.ui.showNodeLastModified
+            }
         };
 
     case 'TOGGLE_OUTLINE_MODE':
@@ -693,6 +759,7 @@ const reducer = (state: State, action: Action): State => {
             projectName: data.projectName || DEFAULT_PROJECT_NAME,
             nodes: data.nodes,
             contentMap: { ...data.contentMap, root: data.contentMap.root || '' },
+            currentProjectPath: data.currentProjectPath || state.currentProjectPath,
             layoutMode: data.layoutMode || 'horizontal',
             metadata: { ...data.metadata, lastModified: now },
             activeNodeId: target.activeNodeId || data.nodes[0]?.id || null,
@@ -702,6 +769,8 @@ const reducer = (state: State, action: Action): State => {
                 viewMode: data.ui?.viewMode || state.ui.viewMode,
                 showOutlineDetails: data.ui?.showOutlineDetails ?? state.ui.showOutlineDetails,
                 theme: data.ui?.theme || state.ui.theme,
+                backgroundPreset: state.ui.backgroundPreset,
+                showNodeLastModified: state.ui.showNodeLastModified,
                 outlineMode: data.ui?.outlineMode || state.ui.outlineMode,
                 hideOnHold: data.ui?.hideOnHold ?? state.ui.hideOnHold,
                 showFocusedRoot: data.ui?.showFocusedRoot ?? state.ui.showFocusedRoot,
@@ -729,18 +798,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Persist to LocalStorage
   useEffect(() => {
-    const dataToSave: ProjectData & { focusedNodeId?: string | null; versions?: VersionEntry[] } = {
+    const dataToSave: ProjectData & { versions?: VersionEntry[] } = {
       projectName: state.projectName,
       nodes: state.nodes,
       contentMap: state.contentMap,
+      activeNodeId: state.activeNodeId,
       metadata: state.metadata,
       layoutMode: state.layoutMode,
       versions: state.versions,
-      focusedNodeId: state.focusedNodeId, // Persist focus state if desired
+      focusedNodeId: state.focusedNodeId,
+      currentProjectPath: state.currentProjectPath,
       ui: { 
         viewMode: state.ui.viewMode,
         showOutlineDetails: state.ui.showOutlineDetails,
         theme: state.ui.theme,
+        backgroundPreset: state.ui.backgroundPreset,
+        showNodeLastModified: state.ui.showNodeLastModified,
         outlineMode: state.ui.outlineMode,
         hideOnHold: state.ui.hideOnHold,
         showFocusedRoot: state.ui.showFocusedRoot,

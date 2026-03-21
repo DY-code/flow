@@ -1,5 +1,9 @@
 import { ProjectData } from '../types';
 
+interface SaveFileOptions {
+  pickerId?: string;
+}
+
 export const generateId = (length: number = 10): string => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';
@@ -18,6 +22,17 @@ export const formatDate = (isoString: string): string => {
   });
 };
 
+export const formatCompactDateTime = (isoString?: string | null): string => {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '';
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${min}`;
+};
+
 export const formatDateForFilename = (date: Date): string => {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -31,17 +46,28 @@ export const sanitizeFilename = (name: string): string => {
   return name.replace(/[\\/:*?"<>|]/g, '_').trim();
 };
 
-export const saveFile = async (content: string, filename: string, contentType: string): Promise<boolean> => {
-  // Try File System Access API
+export const saveFile = async (
+  content: string,
+  filename: string,
+  contentType: string,
+  options: SaveFileOptions = {}
+): Promise<boolean> => {
+  // Let supporting browsers reopen the last directory used for the same project export id.
   if ('showSaveFilePicker' in window) {
     try {
-      const handle = await (window as any).showSaveFilePicker({
+      const pickerOptions: Record<string, unknown> = {
         suggestedName: filename,
         types: [{
           description: contentType.includes('json') ? 'JSON File' : 'Markdown File',
           accept: { [contentType]: ['.' + filename.split('.').pop()] },
         }],
-      });
+      };
+
+      if (options.pickerId) {
+        pickerOptions.id = options.pickerId;
+      }
+
+      const handle = await (window as any).showSaveFilePicker(pickerOptions);
       const writable = await handle.createWritable();
       await writable.write(content);
       await writable.close();
@@ -68,8 +94,8 @@ export const saveFile = async (content: string, filename: string, contentType: s
   return true;
 };
 
-export const downloadJson = async (data: object, filename: string): Promise<boolean> => {
-  return saveFile(JSON.stringify(data, null, 2), filename, 'application/json');
+export const downloadJson = async (data: object, filename: string, options: SaveFileOptions = {}): Promise<boolean> => {
+  return saveFile(JSON.stringify(data, null, 2), filename, 'application/json', options);
 };
 
 export const downloadJsonDirect = async (data: object, filename: string): Promise<boolean> => {
@@ -86,7 +112,7 @@ export const downloadJsonDirect = async (data: object, filename: string): Promis
   return true;
 };
 
-export const downloadMarkdown = async (data: ProjectData, filename: string): Promise<boolean> => {
+export const downloadMarkdown = async (data: ProjectData, filename: string, options: SaveFileOptions = {}): Promise<boolean> => {
   // Use project name as H1
   let md = `# ${data.projectName || 'Flow Export'}\n\n`;
   
@@ -130,5 +156,5 @@ export const downloadMarkdown = async (data: ProjectData, filename: string): Pro
       }
   });
 
-  return saveFile(md, filename, 'text/markdown');
+  return saveFile(md, filename, 'text/markdown', options);
 };

@@ -3,6 +3,7 @@ export type NodeStatus = 'waiting' | 'inProgress' | 'completed' | 'onHold';
 export type LayoutMode = 'horizontal' | 'vertical';
 export type OutlineMode = 'tree' | 'list';
 export type ViewMode = 'split' | 'editor' | 'outline';
+export type BackgroundPreset = 'default' | 'warm' | 'mist' | 'sage';
 
 export interface LogNode {
   id: string;
@@ -13,6 +14,7 @@ export interface LogNode {
   collapsed: boolean;
   order: number;
   lastModified: string; // ISO Timestamp
+  sourceNodeId?: string;
 }
 
 export interface ContentMap {
@@ -23,7 +25,9 @@ export interface ProjectData {
   projectName?: string; // Project Name
   nodes: LogNode[];
   contentMap: ContentMap;
+  activeNodeId?: string | null;
   focusedNodeId?: string | null;
+  currentProjectPath?: string | null;
   layoutMode: LayoutMode;
   metadata: {
     version: string;
@@ -35,6 +39,8 @@ export interface ProjectData {
   ui?: {
     showOutlineDetails?: boolean;
     theme?: 'light' | 'dark';
+    backgroundPreset?: BackgroundPreset;
+    showNodeLastModified?: boolean;
     outlineMode?: OutlineMode;
     viewMode?: ViewMode; // Replaces sidebarVisible
     hideOnHold?: boolean;

@@ -681,7 +681,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
   // --- RENDER ---
   if (!isRoot && (!nodeId || !node)) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-400 dark:text-gray-600 bg-white dark:bg-zinc-950">
+      <div className="h-full flex items-center justify-center text-gray-400 dark:text-gray-600 bg-white/62 dark:bg-zinc-950/62 backdrop-blur-sm">
         <div className="text-center">
             <p className="text-lg font-medium">Select a node</p>
             <p className="text-sm mt-2">Choose an item from the outline.</p>
@@ -691,20 +691,20 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
   }
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-zinc-950 relative group transition-colors">
+    <div className="h-full flex flex-col bg-white/62 dark:bg-zinc-950/62 backdrop-blur-sm relative group transition-colors">
       {/* Hidden File Input for Import */}
       <input type="file" ref={fileInputRef} onChange={handleNodeImport} accept=".md,.txt" className="hidden" />
 
       {/* Toolbar */}
       <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
-          <span className="text-[10px] text-gray-300 dark:text-zinc-600 uppercase font-bold tracking-widest border border-gray-100 dark:border-zinc-800 px-2 py-1 rounded select-none">
+          <span className="text-[10px] text-[color:var(--flow-accent-muted)] uppercase font-bold tracking-widest border border-gray-100 dark:border-zinc-800 px-2 py-1 rounded select-none transition-colors">
               {isRoot ? 'GLOBAL CONTEXT' : 'DETAIL EDITOR'}
           </span>
           {isRoot && (
             <button
               onClick={() => dispatch({ type: 'TOGGLE_ROOT_FOCUS_VIEW' })}
               disabled={!focusedNode}
-              className={`px-2 py-1 text-[10px] font-medium rounded border transition-colors ${focusedNode ? 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 border-gray-100 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80' : 'text-gray-300 dark:text-zinc-600 border-gray-100 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 cursor-not-allowed'}`}
+              className={`px-2 py-1 text-[10px] font-medium rounded border transition-colors ${focusedNode ? 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] border-[color:var(--flow-accent-border)] bg-[color:var(--flow-accent-soft)]/60 dark:border-zinc-800 dark:bg-zinc-900/80' : 'text-gray-300 dark:text-zinc-600 border-gray-100 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 cursor-not-allowed'}`}
               title={focusedNode ? (isRootFocusDisplay ? 'Show Global Context' : 'Show Focused Node') : 'No focused node'}
             >
               {isRootFocusDisplay ? '显示全局' : '显示聚焦'}
@@ -712,7 +712,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           )}
           <button
             onClick={() => setIsPreview(!isPreview)}
-            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 dark:hover:text-blue-400 rounded-md transition-colors bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm border border-gray-100 dark:border-zinc-800 shadow-sm"
+            className="p-1.5 text-gray-400 hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] rounded-md transition-colors bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm border border-gray-100 dark:border-zinc-800 shadow-sm"
             title={isPreview ? "Switch to Edit Mode" : "Switch to Preview Mode"}
           >
             {isPreview ? <IconEdit className="w-4 h-4" /> : <IconEye className="w-4 h-4" />}
@@ -734,14 +734,14 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
               onMouseEnter={() => setIsPreviewOutlineOpen(true)}
               onMouseLeave={handlePreviewPanelLeave}
             >
-              <div className="w-52 rounded-lg border border-gray-100 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/85 backdrop-blur-sm px-3 py-2 shadow-sm">
-                <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 dark:text-zinc-500 mb-2">Outline</div>
+              <div className="w-52 rounded-lg border border-[color:var(--flow-accent-border)]/60 dark:border-zinc-800 bg-white/88 dark:bg-zinc-900/88 backdrop-blur-sm px-3 py-2 shadow-sm">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-[color:var(--flow-accent-muted)] dark:text-[color:var(--flow-accent-muted)] mb-2 transition-colors">Outline</div>
                 <div className="space-y-1 max-h-[60vh] overflow-auto">
                   {previewHeadings.map((item) => (
                     <button
                       key={`${item.domIndex}-${item.text}`}
                       onClick={() => handleOutlineJump(item.domIndex)}
-                      className={`block w-full text-left text-xs leading-5 text-gray-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 truncate ${item.level === 1 ? '' : item.level === 2 ? 'pl-2' : 'pl-4'}`}
+                      className={`block w-full text-left text-xs leading-5 text-gray-500 dark:text-zinc-400 hover:text-[color:var(--flow-accent)] truncate ${item.level === 1 ? '' : item.level === 2 ? 'pl-2' : 'pl-4'}`}
                       title={item.text}
                     >
                       {item.text}
@@ -778,7 +778,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                             padding={0}
                             onKeyDown={handleKeyDown}
                             className="font-mono text-lg text-gray-800 dark:text-gray-200 min-h-[400px]"
-                            textareaClassName="focus:outline-none"
+                            textareaClassName="focus:outline-none selection:bg-[color:var(--flow-accent-soft)] selection:text-[color:var(--flow-accent-strong)]"
                             style={editorStyle}
                         />
                     </div>
@@ -829,17 +829,17 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                             </div>
                         )}
 
-                        <div className="flex items-center bg-gray-50 dark:bg-zinc-800 rounded-lg border border-gray-100 dark:border-zinc-700 p-0.5 opacity-60 hover:opacity-100 transition-opacity mt-1">
+                        <div className="flex items-center bg-white/70 dark:bg-zinc-800/90 rounded-lg border border-[color:var(--flow-accent-border)]/60 dark:border-zinc-700 p-0.5 opacity-70 hover:opacity-100 transition-opacity mt-1">
                             <button 
                                 onClick={handleNodeExport} 
-                                className="p-1 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded text-gray-500 hover:text-blue-600 dark:hover:text-blue-400" 
+                                className="p-1 hover:bg-[color:var(--flow-accent-soft)] dark:hover:bg-zinc-700 rounded text-gray-500 hover:text-[color:var(--flow-accent)] transition-colors" 
                                 title="Export Node Markdown"
                             >
                                 <IconDownload className="w-4 h-4" />
                             </button>
                             <button 
                                 onClick={() => fileInputRef.current?.click()} 
-                                className="p-1 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded text-gray-500 hover:text-blue-600 dark:hover:text-blue-400" 
+                                className="p-1 hover:bg-[color:var(--flow-accent-soft)] dark:hover:bg-zinc-700 rounded text-gray-500 hover:text-[color:var(--flow-accent)] transition-colors" 
                                 title="Import Markdown (Append)"
                             >
                                 <IconUpload className="w-4 h-4" />
@@ -893,7 +893,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                             padding={0}
                             onKeyDown={handleKeyDown}
                             className="font-mono text-lg text-gray-800 dark:text-gray-200 min-h-[400px]"
-                            textareaClassName="focus:outline-none"
+                            textareaClassName="focus:outline-none selection:bg-[color:var(--flow-accent-soft)] selection:text-[color:var(--flow-accent-strong)]"
                             style={editorStyle}
                         />
                     </div>

@@ -60,13 +60,13 @@ const SplitPane: React.FC<SplitPaneProps> = ({ split, children, initialSize = '5
       </div>
 
       <div 
-        className={`z-10 bg-gray-200 dark:bg-zinc-700 hover:bg-blue-400 dark:hover:bg-blue-600 transition-colors flex items-center justify-center
+        className={`z-10 bg-gray-200 dark:bg-zinc-700 hover:bg-[color:var(--flow-accent-soft-hover)] transition-colors flex items-center justify-center
             ${split === 'vertical' ? 'w-1 cursor-col-resize h-full' : 'h-1 cursor-row-resize w-full'}
         `}
         onMouseDown={handleMouseDown}
       >
           {/* Handle Grip Visual */}
-          <div className={`bg-gray-400 dark:bg-zinc-500 rounded-full ${split === 'vertical' ? 'w-0.5 h-6' : 'h-0.5 w-6'}`} />
+          <div className={`bg-[color:var(--flow-accent-border)] dark:bg-[color:var(--flow-accent-border)] rounded-full ${split === 'vertical' ? 'w-0.5 h-6' : 'h-0.5 w-6'}`} />
       </div>
 
       <div className="flex-1 overflow-hidden">

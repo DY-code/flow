@@ -2,9 +2,12 @@ import React, { useRef, useEffect, useState } from 'react';
 import { useStore } from '../context/Store';
 import StatusMenu from './StatusMenu';
 import { LogNode } from '../types';
+import { formatCompactDateTime } from '../utils/helpers';
 import { IconTarget } from './Icons';
 
 const INDENT_SIZE = 24; // Width of each indentation level in pixels
+const DELETE_NODE_MESSAGE = '确定删除当前节点吗？子节点将提升一级，此操作不可撤销。';
+const DELETE_SUBTREE_MESSAGE = '确定删除当前节点及其所有子节点吗？此操作不可撤销。';
 
 const OutlineTree: React.FC = () => {
   const { state, dispatch } = useStore();
@@ -201,9 +204,12 @@ const OutlineTree: React.FC = () => {
       }
       case 'Delete':
       case 'Backspace': {
+        const includeDescendants = e.ctrlKey || e.metaKey;
+        const confirmMessage = includeDescendants ? DELETE_SUBTREE_MESSAGE : DELETE_NODE_MESSAGE;
+
         if (nodes.length > 1) {
-            if (window.confirm('Delete this node?')) {
-                dispatch({ type: 'DELETE_NODE', payload: node.id });
+            if (window.confirm(confirmMessage)) {
+                dispatch({ type: 'DELETE_NODE', payload: { id: node.id, includeDescendants } });
                 // Focus remains on listRef because it's the container
             }
         }
@@ -328,7 +334,7 @@ const OutlineTree: React.FC = () => {
 
   return (
     <div 
-        className="flex-1 overflow-y-auto pb-0 bg-white dark:bg-zinc-950 outline-none transition-colors" 
+        className="flex-1 overflow-y-auto pb-0 bg-white/62 dark:bg-zinc-950/62 backdrop-blur-sm outline-none transition-colors" 
         ref={listRef} 
         tabIndex={0} // Make container focusable
         onKeyDown={handleContainerKeyDown}
@@ -352,14 +358,15 @@ const OutlineTree: React.FC = () => {
         const isActive = activeNodeId === node.id;
         const isMenuOpen = openMenuId === node.id;
         const isEditing = editingId === node.id;
+        const nodeLastModifiedLabel = formatCompactDateTime(node.lastModified);
         
         // Drag Visuals
         const isDragTarget = dragOverInfo?.id === node.id;
         const dragPosition = isDragTarget ? dragOverInfo?.position : null;
         
         // Styles for drop indicators
-        const borderTopClass = (isDragTarget && dragPosition === 'top') ? 'border-t-2 border-t-blue-500' : 'border-t border-t-transparent';
-        const borderBottomClass = (isDragTarget && dragPosition === 'bottom') ? 'border-b-2 border-b-blue-500' : 'border-b border-b-transparent';
+        const borderTopClass = (isDragTarget && dragPosition === 'top') ? 'border-t-2 border-t-[color:var(--flow-accent)]' : 'border-t border-t-transparent';
+        const borderBottomClass = (isDragTarget && dragPosition === 'bottom') ? 'border-b-2 border-b-[color:var(--flow-accent)]' : 'border-b border-b-transparent';
         
         return (
           <div
@@ -441,8 +448,8 @@ const OutlineTree: React.FC = () => {
                         <div className={`
                             w-2 h-2 rounded-full transition-all duration-200 z-10 box-border
                             ${(hasChildren && node.collapsed)
-                                ? (isActive ? 'bg-blue-600 dark:bg-blue-500 border border-transparent' : 'bg-gray-500 dark:bg-zinc-400 border border-transparent')
-                                : (isActive ? 'bg-white dark:bg-zinc-900 border-2 border-blue-600 dark:border-blue-500' : 'bg-white dark:bg-zinc-900 border border-gray-400 dark:border-zinc-500')
+                                ? (isActive ? 'bg-[color:var(--flow-accent)] border border-transparent' : 'bg-gray-500 dark:bg-zinc-400 border border-transparent')
+                                : (isActive ? 'bg-white dark:bg-zinc-900 border-2 border-[color:var(--flow-accent)]' : 'bg-white dark:bg-zinc-900 border border-gray-400 dark:border-zinc-500')
                             }
                             ${isActive ? 'scale-110' : ''}
                         `} />
@@ -474,7 +481,7 @@ const OutlineTree: React.FC = () => {
                                 onBlur={() => setEditingId(null)}
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
-                                className="bg-white dark:bg-zinc-800 border border-blue-400 rounded-sm flex-1 focus:outline-none text-sm font-medium text-gray-900 dark:text-gray-100 px-1 py-0.5 min-w-[50px]"
+                                className="bg-white dark:bg-zinc-800 border border-[color:var(--flow-accent-border)] rounded-sm flex-1 focus:outline-none text-sm font-medium text-gray-900 dark:text-gray-100 px-1 py-0.5 min-w-[50px]"
                                 placeholder="Untitled"
                             />
                         ) : (
@@ -509,6 +516,17 @@ const OutlineTree: React.FC = () => {
                         )}
                     </div>
                     
+                    {ui.showNodeLastModified && nodeLastModifiedLabel && (
+                        <div className="ml-2 shrink-0">
+                            <span
+                                className="text-[11px] text-gray-400 dark:text-gray-500 whitespace-nowrap"
+                                title="节点最近修改时间"
+                            >
+                                {nodeLastModifiedLabel}
+                            </span>
+                        </div>
+                    )}
+
                     {/* Focus Button - Only visible on hover, if not already focused on this node */}
                     <div className={`opacity-0 group-hover:opacity-100 transition-opacity ml-2 ${focusedNodeId === node.id ? 'opacity-50' : ''}`}>
                          <button
@@ -516,7 +534,7 @@ const OutlineTree: React.FC = () => {
                                 e.stopPropagation();
                                 dispatch({ type: 'SET_FOCUSED_NODE', payload: node.id === focusedNodeId ? null : node.id });
                             }}
-                            className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded"
+                            className="p-1 text-gray-400 hover:text-[color:var(--flow-accent)] rounded transition-colors"
                             title={node.id === focusedNodeId ? "Exit Focus" : "Focus on this node"}
                          >
                             <IconTarget className="w-3.5 h-3.5" />

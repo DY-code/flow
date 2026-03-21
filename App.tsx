@@ -9,10 +9,84 @@ import {
     IconDownload, IconUpload, IconChart, IconMenu, 
     IconLayoutHorizontal, IconLayoutVertical, IconListDetails, IconFilePlus,
     IconSun, IconMoon, IconViewSplit, IconViewEditor, IconViewOutline,
-    IconHome, IconChevronRight, IconChevronDown, IconGitCommit, IconMinus
+    IconHome, IconChevronRight, IconChevronDown, IconGitCommit, IconMinus, IconSquare
 } from './components/Icons';
-import { downloadJson, downloadJsonDirect, downloadMarkdown, formatDateForFilename, sanitizeFilename } from './utils/helpers';
-import { ProjectData, LogNode } from './types';
+import { downloadJson, downloadJsonDirect, downloadMarkdown, formatCompactDateTime, formatDateForFilename, sanitizeFilename } from './utils/helpers';
+import { ProjectData, LogNode, BackgroundPreset } from './types';
+
+interface RecentProjectEntry {
+  name: string;
+  displayName: string;
+  relativePath: string;
+  isGlobal: boolean;
+  modifiedAt: string;
+}
+
+interface RecentProjectsResponse {
+  projects: RecentProjectEntry[];
+  canCreateDefaultTaskPlan?: boolean;
+  error?: string;
+}
+
+interface ProjectFileResponse {
+  projectPath: string;
+  projectData: ProjectData;
+  generatedCount?: number;
+  updatedCount?: number;
+}
+
+const buildProjectExportPickerId = (projectData: Pick<ProjectData, 'currentProjectPath' | 'metadata' | 'projectName'>): string => {
+  const rawKey = projectData.currentProjectPath || projectData.metadata?.createdAt || projectData.projectName || 'untitled-project';
+  let hash = 0;
+
+  for (let i = 0; i < rawKey.length; i += 1) {
+    hash = (hash * 31 + rawKey.charCodeAt(i)) >>> 0;
+  }
+
+  return `flow-export-${hash.toString(36)}`;
+};
+
+const BACKGROUND_PRESETS: Array<{ id: BackgroundPreset; label: string; description: string; swatch: string; light: string; dark: string }> = [
+  { id: 'default', label: '默认', description: '保持当前系统背景', swatch: '#D4D4D8', light: '#f3f4f6', dark: '#09090b' },
+  { id: 'warm', label: '暖灰米白', description: '柔和、纸面感更强', swatch: '#F3EFE6', light: '#F3EFE6', dark: '#2E2A24' },
+  { id: 'mist', label: '浅雾蓝灰', description: '冷静、清爽', swatch: '#E8EEF2', light: '#E8EEF2', dark: '#232C33' },
+  { id: 'sage', label: '浅鼠尾草绿', description: '安静、放松', swatch: '#E7EFE8', light: '#E7EFE8', dark: '#243028' }
+];
+
+const ACCENT_PRESETS: Record<BackgroundPreset, { accent: string; accentStrong: string; accentSoft: string; accentSoftHover: string; accentBorder: string; accentMuted: string }> = {
+  default: {
+    accent: '#2563EB',
+    accentStrong: '#1D4ED8',
+    accentSoft: 'rgba(37, 99, 235, 0.12)',
+    accentSoftHover: 'rgba(37, 99, 235, 0.18)',
+    accentBorder: 'rgba(37, 99, 235, 0.34)',
+    accentMuted: '#5B7BC5'
+  },
+  warm: {
+    accent: '#A56A2A',
+    accentStrong: '#8A531C',
+    accentSoft: 'rgba(165, 106, 42, 0.12)',
+    accentSoftHover: 'rgba(165, 106, 42, 0.18)',
+    accentBorder: 'rgba(165, 106, 42, 0.34)',
+    accentMuted: '#8C6A40'
+  },
+  mist: {
+    accent: '#3D6F8E',
+    accentStrong: '#2F5A74',
+    accentSoft: 'rgba(61, 111, 142, 0.12)',
+    accentSoftHover: 'rgba(61, 111, 142, 0.18)',
+    accentBorder: 'rgba(61, 111, 142, 0.34)',
+    accentMuted: '#5C7C92'
+  },
+  sage: {
+    accent: '#4F7A5A',
+    accentStrong: '#3E6248',
+    accentSoft: 'rgba(79, 122, 90, 0.12)',
+    accentSoftHover: 'rgba(79, 122, 90, 0.18)',
+    accentBorder: 'rgba(79, 122, 90, 0.34)',
+    accentMuted: '#64816B'
+  }
+};
 
 // --- Extracted Components for Stability ---
 
@@ -47,14 +121,14 @@ const FocusArea: React.FC = () => {
     const breadcrumbs = getBreadcrumbs();
 
     return (
-        <div className="h-full w-full bg-gray-50 dark:bg-zinc-950 flex flex-col transition-colors">
+        <div className="h-full w-full bg-white/62 dark:bg-zinc-950/62 backdrop-blur-sm flex flex-col transition-colors">
             {/* Header for Focus Area */}
-            <div className="h-8 bg-gray-100 dark:bg-zinc-800 border-b border-gray-200 dark:border-zinc-700 flex items-center px-3 justify-between flex-shrink-0 transition-colors group">
+            <div className="h-8 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-sm border-b border-gray-200/80 dark:border-zinc-700/80 flex items-center px-3 justify-between flex-shrink-0 transition-colors group">
                 {state.focusedNodeId ? (
                     <div className="flex items-center text-xs font-medium text-gray-600 dark:text-gray-300 overflow-hidden whitespace-nowrap mask-linear-fade">
                         <button 
                             onClick={() => dispatch({ type: 'SET_FOCUSED_NODE', payload: null })}
-                            className="hover:text-blue-600 dark:hover:text-blue-400 p-0.5 rounded flex items-center"
+                            className="hover:text-[color:var(--flow-accent)] p-0.5 rounded flex items-center transition-colors"
                             title="Exit Focus Mode"
                         >
                             <IconHome className="w-3.5 h-3.5" />
@@ -64,7 +138,7 @@ const FocusArea: React.FC = () => {
                                 <IconChevronRight className="w-3 h-3 mx-1 text-gray-400 flex-shrink-0" />
                                 <button
                                     onClick={() => dispatch({ type: 'SET_FOCUSED_NODE', payload: node.id })}
-                                    className={`hover:text-blue-600 dark:hover:text-blue-400 p-0.5 rounded truncate max-w-[120px] ${i === breadcrumbs.length - 1 ? 'font-bold text-gray-900 dark:text-gray-100' : ''}`}
+                                    className={`hover:text-[color:var(--flow-accent)] p-0.5 rounded truncate max-w-[120px] transition-colors ${i === breadcrumbs.length - 1 ? 'font-bold text-gray-900 dark:text-gray-100' : ''}`}
                                     title={node.text || 'Untitled'}
                                 >
                                     {node.text || 'Untitled'}
@@ -73,9 +147,17 @@ const FocusArea: React.FC = () => {
                         ))}
                     </div>
                 ) : (
-                    <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">逻辑链 & 思维流</span>
+                    <span className="text-[10px] font-bold text-[color:var(--flow-accent-muted)] uppercase tracking-wider transition-colors">逻辑链 & 思维流</span>
                 )}
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                        onClick={() => dispatch({ type: 'TOGGLE_NODE_LAST_MODIFIED' })}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        title={state.ui.showNodeLastModified ? 'Hide Node Timestamps' : 'Show Node Timestamps'}
+                    >
+                        <IconSquare className="w-3 h-3" />
+                        <span className="hidden sm:inline">{state.ui.showNodeLastModified ? '隐藏节点时间' : '展示节点时间'}</span>
+                    </button>
                     <button
                         onClick={() => dispatch({ type: 'TOGGLE_HIDE_ON_HOLD' })}
                         className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
@@ -137,10 +219,31 @@ const ResearchLogApp: React.FC = () => {
   const viewMode = state.ui.viewMode;
   const isMobile = state.ui.isMobile;
   const isDark = state.ui.theme === 'dark';
+  const backgroundPreset = state.ui.backgroundPreset;
+  const currentProjectPath = state.currentProjectPath;
+  const isGlobalProject = !!currentProjectPath && currentProjectPath.startsWith('global/');
+  const isTaskPlanProject = currentProjectPath === 'global/任务计划.json';
+  const isTodayTodoProject = currentProjectPath === 'global/今日待办.json';
+  const projectLastModifiedLabel = formatCompactDateTime(state.metadata.lastModified);
 
   // Export Menu State
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [isBackgroundMenuOpen, setIsBackgroundMenuOpen] = useState(false);
+  const backgroundMenuRef = useRef<HTMLDivElement>(null);
+  const [isRecentProjectsMenuOpen, setIsRecentProjectsMenuOpen] = useState(false);
+  const recentProjectsMenuRef = useRef<HTMLDivElement>(null);
+  const [recentProjects, setRecentProjects] = useState<RecentProjectEntry[]>([]);
+  const [recentProjectsStatus, setRecentProjectsStatus] = useState<{ type: 'idle' | 'loading' | 'error'; message: string }>({
+    type: 'idle',
+    message: ''
+  });
+  const [canCreateDefaultTaskPlan, setCanCreateDefaultTaskPlan] = useState(false);
+  const [isOpeningRecentProject, setIsOpeningRecentProject] = useState<string | null>(null);
+  const [isCreatingTaskPlan, setIsCreatingTaskPlan] = useState(false);
+  const [isSavingGlobalProject, setIsSavingGlobalProject] = useState(false);
+  const [isGeneratingTodayTodos, setIsGeneratingTodayTodos] = useState(false);
+  const [isSyncingTodayTodos, setIsSyncingTodayTodos] = useState(false);
   const [isGitPushModalOpen, setIsGitPushModalOpen] = useState(false);
   const [gitRepoUrl, setGitRepoUrl] = useState('');
   const [proxyEnabled, setProxyEnabled] = useState(false);
@@ -179,6 +282,20 @@ const ResearchLogApp: React.FC = () => {
     return !hasUnsavedChanges && lastVersionBackupTs > lastExportedTs + 100;
   })();
 
+  const activeBackgroundPreset = BACKGROUND_PRESETS.find((preset) => preset.id === backgroundPreset) || BACKGROUND_PRESETS[0];
+  const accentPreset = ACCENT_PRESETS[backgroundPreset] || ACCENT_PRESETS.default;
+  const appBackgroundColor = isDark ? activeBackgroundPreset.dark : activeBackgroundPreset.light;
+
+  const appChromeStyle = {
+    backgroundColor: appBackgroundColor,
+    '--flow-accent': accentPreset.accent,
+    '--flow-accent-strong': accentPreset.accentStrong,
+    '--flow-accent-soft': accentPreset.accentSoft,
+    '--flow-accent-soft-hover': accentPreset.accentSoftHover,
+    '--flow-accent-border': accentPreset.accentBorder,
+    '--flow-accent-muted': accentPreset.accentMuted
+  } as React.CSSProperties;
+
   // Close interceptor
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -199,16 +316,21 @@ const ResearchLogApp: React.FC = () => {
         if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
             setIsExportMenuOpen(false);
         }
+        if (recentProjectsMenuRef.current && !recentProjectsMenuRef.current.contains(event.target as Node)) {
+            setIsRecentProjectsMenuOpen(false);
+        }
+        if (backgroundMenuRef.current && !backgroundMenuRef.current.contains(event.target as Node)) {
+            setIsBackgroundMenuOpen(false);
+        }
         if (newProjectMenuRef.current && !newProjectMenuRef.current.contains(event.target as Node)) {
             setIsNewProjectMenuOpen(false);
         }
     };
-    // Only add listener if either menu is open
-    if (isExportMenuOpen || isNewProjectMenuOpen) {
+    if (isExportMenuOpen || isRecentProjectsMenuOpen || isBackgroundMenuOpen || isNewProjectMenuOpen) {
         document.addEventListener('mousedown', handleClickOutside);
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isExportMenuOpen, isNewProjectMenuOpen]);
+  }, [isExportMenuOpen, isRecentProjectsMenuOpen, isBackgroundMenuOpen, isNewProjectMenuOpen]);
 
   useEffect(() => {
     if (isEditingProjectName) {
@@ -224,6 +346,187 @@ const ResearchLogApp: React.FC = () => {
     setHttpsProxy(localStorage.getItem(HTTPS_PROXY_STORAGE_KEY) || DEFAULT_HTTPS_PROXY);
   }, []);
 
+  const loadRecentProjects = useCallback(async () => {
+    setRecentProjectsStatus({ type: 'loading', message: '' });
+
+    try {
+      const response = await fetch('/api/projects');
+      const result = await response.json() as RecentProjectsResponse;
+      if (!response.ok) {
+        throw new Error(result?.error || '读取项目列表失败');
+      }
+
+      setRecentProjects(Array.isArray(result?.projects) ? result.projects : []);
+      setCanCreateDefaultTaskPlan(Boolean(result?.canCreateDefaultTaskPlan));
+      setRecentProjectsStatus({ type: 'idle', message: '' });
+    } catch (error: any) {
+      setRecentProjects([]);
+      setCanCreateDefaultTaskPlan(false);
+      setRecentProjectsStatus({
+        type: 'error',
+        message: error?.message || '本地项目服务未启动，最近项目暂不可用。'
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isRecentProjectsMenuOpen) {
+      void loadRecentProjects();
+    }
+  }, [isRecentProjectsMenuOpen, loadRecentProjects]);
+
+  const handleOpenRecentProject = async (project: RecentProjectEntry) => {
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm('当前项目有未导出的修改，确定打开其他项目吗？');
+      if (!confirmed) return;
+    }
+
+    setIsOpeningRecentProject(project.relativePath);
+
+    try {
+      const response = await fetch(`/api/projects/open?path=${encodeURIComponent(project.relativePath)}`);
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result?.error || '读取项目失败');
+      }
+
+      dispatch({ type: 'IMPORT_DATA', payload: { data: result.projectData as ProjectData, projectPath: result.projectPath } });
+      setIsRecentProjectsMenuOpen(false);
+    } catch (error: any) {
+      alert(error?.message || '读取项目失败，当前项目未变更。');
+    } finally {
+      setIsOpeningRecentProject(null);
+    }
+  };
+
+  const handleCreateDefaultTaskPlan = async () => {
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm('当前项目有未导出的修改，确定新建并打开任务计划吗？');
+      if (!confirmed) return;
+    }
+
+    setIsCreatingTaskPlan(true);
+
+    try {
+      const response = await fetch('/api/projects/create-default-task-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result?.error || '创建任务计划失败');
+      }
+
+      dispatch({ type: 'IMPORT_DATA', payload: { data: result.projectData as ProjectData, projectPath: result.projectPath } });
+      setIsRecentProjectsMenuOpen(false);
+      await loadRecentProjects();
+    } catch (error: any) {
+      alert(error?.message || '创建任务计划失败，当前项目未变更。');
+    } finally {
+      setIsCreatingTaskPlan(false);
+    }
+  };
+
+  const confirmGlobalAction = (action: 'save' | 'generate' | 'sync') => {
+    if (action === 'save') {
+      return window.confirm('确定将当前内容保存到 global 文件吗？');
+    }
+    if (action === 'generate') {
+      return window.confirm('确定根据任务计划生成今日待办吗？这将覆盖现有今日待办内容。');
+    }
+    return window.confirm('确定将今日待办的完成情况回写到任务计划吗？');
+  };
+
+  const handleSaveGlobalProject = async () => {
+    if (!currentProjectPath || !isGlobalProject) return;
+    if (!confirmGlobalAction('save')) return;
+
+    setIsSavingGlobalProject(true);
+    try {
+      const response = await fetch('/api/projects/save-global', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectPath: currentProjectPath,
+          projectData: buildProjectData()
+        })
+      });
+      const result = await response.json() as ProjectFileResponse & { error?: string };
+      if (!response.ok) {
+        throw new Error(result?.error || '保存 global 项目失败');
+      }
+
+      dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+      await loadRecentProjects();
+      alert('已保存到 global。');
+    } catch (error: any) {
+      alert(error?.message || '保存 global 项目失败。');
+    } finally {
+      setIsSavingGlobalProject(false);
+    }
+  };
+
+  const handleGenerateTodayTodos = async () => {
+    if (!confirmGlobalAction('generate')) return;
+
+    setIsGeneratingTodayTodos(true);
+    try {
+      const response = await fetch('/api/projects/generate-today-todos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskPlanData: buildProjectData() })
+      });
+      const result = await response.json() as ProjectFileResponse & { error?: string };
+      if (!response.ok) {
+        throw new Error(result?.error || '生成今日待办失败');
+      }
+
+      dispatch({ type: 'IMPORT_DATA', payload: { data: result.projectData, projectPath: result.projectPath } });
+      await loadRecentProjects();
+      alert(`已生成今日待办，共 ${result.generatedCount ?? 0} 项。`);
+    } catch (error: any) {
+      alert(error?.message || '生成今日待办失败。');
+    } finally {
+      setIsGeneratingTodayTodos(false);
+    }
+  };
+
+  const handleSyncTodayTodos = async () => {
+    if (!confirmGlobalAction('sync')) return;
+
+    setIsSyncingTodayTodos(true);
+    try {
+      const response = await fetch('/api/projects/sync-today-todos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isTodayTodoProject ? { todayTodoData: buildProjectData() } : {})
+      });
+      const result = await response.json() as {
+        taskPlanProjectPath: string;
+        taskPlanData: ProjectData;
+        todayTodoProjectPath: string;
+        todayTodoData: ProjectData;
+        updatedCount?: number;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(result?.error || '回写完成情况失败');
+      }
+
+      if (isTaskPlanProject) {
+        dispatch({ type: 'IMPORT_DATA', payload: { data: result.taskPlanData, projectPath: result.taskPlanProjectPath } });
+      } else if (isTodayTodoProject) {
+        dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+      }
+      await loadRecentProjects();
+      alert(`已回写完成情况，共同步 ${result.updatedCount ?? 0} 项。`);
+    } catch (error: any) {
+      alert(error?.message || '回写完成情况失败。');
+    } finally {
+      setIsSyncingTodayTodos(false);
+    }
+  };
+
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -234,7 +537,7 @@ const ResearchLogApp: React.FC = () => {
         const json = JSON.parse(event.target?.result as string) as ProjectData;
         if (json.nodes && json.contentMap) {
             if(window.confirm('Overwrite current project?')) {
-                dispatch({ type: 'IMPORT_DATA', payload: json });
+                dispatch({ type: 'IMPORT_DATA', payload: { data: json, projectPath: null } });
             }
         } else {
             alert('Invalid file format.');
@@ -268,7 +571,9 @@ const ResearchLogApp: React.FC = () => {
       projectName: state.projectName,
       nodes: state.nodes,
       contentMap: state.contentMap,
+      activeNodeId: state.activeNodeId,
       focusedNodeId: state.focusedNodeId,
+      currentProjectPath: state.currentProjectPath,
       metadata: state.metadata,
       layoutMode: state.layoutMode,
       ui: state.ui
@@ -302,7 +607,8 @@ const ResearchLogApp: React.FC = () => {
 
   const handleExportJson = async () => {
     const data: ProjectData = buildProjectData();
-    const saved = await downloadJson(data, `${getSafeFilename()}.json`);
+    const pickerId = buildProjectExportPickerId(data);
+    const saved = await downloadJson(data, `${getSafeFilename()}.json`, { pickerId });
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     }
@@ -311,7 +617,8 @@ const ResearchLogApp: React.FC = () => {
 
   const handleExportMarkdown = async () => {
     const data: ProjectData = buildProjectData();
-    const saved = await downloadMarkdown(data, `${getSafeFilename()}.md`);
+    const pickerId = buildProjectExportPickerId(data);
+    const saved = await downloadMarkdown(data, `${getSafeFilename()}.md`, { pickerId });
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     }
@@ -491,7 +798,7 @@ const ResearchLogApp: React.FC = () => {
   const ViewModeButton = ({ mode, icon: Icon, title }: { mode: 'split' | 'editor' | 'outline', icon: any, title: string }) => (
     <button
         onClick={() => dispatch({ type: 'SET_VIEW_MODE', payload: mode })}
-        className={`p-1.5 rounded-md transition-colors ${viewMode === mode ? 'bg-white shadow text-blue-600 dark:bg-zinc-700 dark:text-blue-400' : 'text-gray-500 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300'}`}
+        className={`p-1.5 rounded-md transition-colors ${viewMode === mode ? 'bg-white shadow text-[color:var(--flow-accent)] dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-gray-500 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300'}`}
         title={title}
     >
         <Icon className="w-4 h-4" />
@@ -500,17 +807,105 @@ const ResearchLogApp: React.FC = () => {
 
   return (
     // Apply .dark class to the top wrapper based on state
-    <div className={`${isDark ? 'dark' : ''} h-screen flex flex-col font-sans overflow-hidden transition-colors`}>
-      <div className="h-full flex flex-col bg-gray-100 dark:bg-zinc-950 text-gray-900 dark:text-gray-100">
+    <div className={`${isDark ? 'dark' : ''} h-screen flex flex-col font-sans overflow-hidden transition-colors`} style={appChromeStyle}>
+      <div className="h-full flex flex-col text-gray-900 dark:text-gray-100 transition-colors" style={{ backgroundColor: appBackgroundColor }}>
         
         {/* Header */}
-        <header className="h-14 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800 flex items-center justify-between px-4 shadow-sm z-30 flex-shrink-0 relative transition-colors">
+        <header className="h-14 bg-white/78 dark:bg-zinc-900/78 backdrop-blur-md border-b border-gray-200/80 dark:border-zinc-800/80 flex items-center justify-between px-4 shadow-sm z-30 flex-shrink-0 relative transition-colors">
             <div className="flex items-center gap-3 flex-1 min-w-0 z-10">
+                <div className="relative" ref={recentProjectsMenuRef}>
+                    <button
+                        onClick={() => setIsRecentProjectsMenuOpen((open) => !open)}
+                        className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${isRecentProjectsMenuOpen ? 'border-[color:var(--flow-accent-border)] bg-[color:var(--flow-accent-soft)] text-[color:var(--flow-accent)] dark:border-[color:var(--flow-accent-border)] dark:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent)]' : 'border-[color:var(--flow-accent-border)]/70 bg-white/85 text-[color:var(--flow-accent-muted)] hover:bg-[color:var(--flow-accent-soft)] dark:border-[color:var(--flow-accent-border)] dark:bg-zinc-900/85 dark:text-[color:var(--flow-accent-muted)] dark:hover:bg-zinc-800'}`}
+                        title="打开最近项目"
+                    >
+                        <span>最近项目</span>
+                        <IconChevronDown className={`h-3.5 w-3.5 transition-transform ${isRecentProjectsMenuOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {isRecentProjectsMenuOpen && (
+                        <div className="absolute left-0 mt-2 w-80 overflow-hidden rounded-xl border border-[color:var(--flow-accent-border)]/70 bg-white shadow-xl dark:border-[color:var(--flow-accent-border)] dark:bg-zinc-900 z-50">
+                            <div className="border-b border-gray-100 px-4 py-3 dark:border-zinc-800">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">最近项目</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-400">按最近修改时间排序，global 固定置顶</div>
+                                    </div>
+                                    <button
+                                        onClick={() => void loadRecentProjects()}
+                                        className="rounded-md px-2 py-1 text-xs text-[color:var(--flow-accent-muted)] hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:text-[color:var(--flow-accent-muted)] dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)]"
+                                        title="刷新项目列表"
+                                    >
+                                        刷新
+                                    </button>
+                                </div>
+                                {recentProjectsStatus.type !== 'error' && canCreateDefaultTaskPlan && (
+                                    <div className="mt-3 flex items-center gap-2">
+                                        <button
+                                            onClick={() => void handleCreateDefaultTaskPlan()}
+                                            disabled={isCreatingTaskPlan || isOpeningRecentProject !== null}
+                                            className="inline-flex items-center rounded-lg bg-[color:var(--flow-accent)] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[color:var(--flow-accent-strong)] disabled:cursor-wait disabled:opacity-70"
+                                        >
+                                            {isCreatingTaskPlan ? '创建中...' : '新建任务计划'}
+                                        </button>
+                                        <span className="text-[11px] text-gray-500 dark:text-gray-400">当 global 目录为空时可快速创建默认项目</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="max-h-80 overflow-y-auto py-1">
+                                {recentProjectsStatus.type === 'loading' && (
+                                    <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">正在读取项目列表...</div>
+                                )}
+
+                                {recentProjectsStatus.type === 'error' && (
+                                    <div className="px-4 py-4 text-sm text-red-600 dark:text-red-400">
+                                        <div>{recentProjectsStatus.message}</div>
+                                        <div className="mt-2 text-xs text-red-500/80 dark:text-red-300/80">当前项目仍可继续编辑；恢复本地项目服务后即可重新使用最近项目与默认创建入口。</div>
+                                    </div>
+                                )}
+
+                                {recentProjectsStatus.type !== 'loading' && recentProjectsStatus.type !== 'error' && recentProjects.length === 0 && (
+                                    <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">`flow-projects` 中还没有可打开的项目文件。</div>
+                                )}
+
+                                {recentProjectsStatus.type !== 'loading' && recentProjectsStatus.type !== 'error' && recentProjects.map((project) => (
+                                    <button
+                                        key={project.relativePath}
+                                        onClick={() => void handleOpenRecentProject(project)}
+                                        disabled={isOpeningRecentProject !== null}
+                                        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-[color:var(--flow-accent-soft)] disabled:cursor-wait disabled:opacity-70 dark:hover:bg-zinc-800"
+                                    >
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                {project.isGlobal && (
+                                                    <span className="rounded-full bg-[color:var(--flow-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--flow-accent)] dark:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent)]">
+                                                        全局
+                                                    </span>
+                                                )}
+                                                <span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                                                    {project.displayName}
+                                                </span>
+                                            </div>
+                                            <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                                                {project.relativePath}
+                                            </div>
+                                        </div>
+                                        <div className="shrink-0 text-right text-[11px] text-gray-400 dark:text-gray-500">
+                                            {isOpeningRecentProject === project.relativePath ? '打开中...' : new Date(project.modifiedAt).toLocaleString('zh-CN', { hour12: false })}
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 {/* View Mode Switcher */}
                 {isMobile ? (
                     <button 
                         onClick={() => dispatch({ type: 'SET_VIEW_MODE', payload: viewMode === 'editor' ? 'split' : 'editor' })} 
-                        className={`p-2 rounded-lg transition-colors ${viewMode !== 'editor' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800'}`}
+                        className={`p-2 rounded-lg transition-colors ${viewMode !== 'editor' ? 'bg-[color:var(--flow-accent-soft)] text-[color:var(--flow-accent)] dark:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent)]' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800'}`}
                         title={viewMode === 'editor' ? "Show Outline" : "Show Editor"}
                     >
                         <IconMenu />
@@ -524,8 +919,8 @@ const ResearchLogApp: React.FC = () => {
                 )}
                 
                 {/* Editable Project Name */}
-                <div className="flex flex-col justify-center min-w-0 ml-2">
-                    <div className="flex items-center gap-2">
+                <div className="group/project-title flex items-center min-w-0 ml-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
                         {isEditingProjectName ? (
                             <input 
                                 ref={projectNameInputRef}
@@ -552,13 +947,51 @@ const ResearchLogApp: React.FC = () => {
                         )}
                         {/* Status Indicator */}
                         <div 
-                            className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                            className={`w-2 h-2 rounded-full flex-shrink-0 ${
                                 hasUnsavedChanges ? 'bg-orange-500 animate-pulse' : hasCurrentVersionBackup ? 'bg-yellow-400' : 'bg-green-500'
                             }`} 
                             title={hasUnsavedChanges ? "Unexported changes" : hasCurrentVersionBackup ? "Current version backed up in Version History" : "All changes exported"}
                         />
+                        {!isGlobalProject && projectLastModifiedLabel && (
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500 transition-opacity opacity-0 group-hover/project-title:opacity-100 whitespace-nowrap" title="项目最近修改时间">
+                                {projectLastModifiedLabel}
+                            </span>
+                        )}
+                        {isGlobalProject && (
+                            <div className="ml-1 flex items-center gap-1">
+                                <button
+                                    onClick={() => void handleSaveGlobalProject()}
+                                    disabled={isSavingGlobalProject || isGeneratingTodayTodos || isSyncingTodayTodos}
+                                    className="rounded-md border border-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70 dark:border-zinc-700 dark:text-gray-200 dark:hover:bg-zinc-800"
+                                >
+                                    {isSavingGlobalProject ? '保存中...' : '保存到 global'}
+                                </button>
+                                {isTaskPlanProject && (
+                                    <button
+                                        onClick={() => void handleGenerateTodayTodos()}
+                                        disabled={isSavingGlobalProject || isGeneratingTodayTodos || isSyncingTodayTodos}
+                                        className="rounded-md border border-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70 dark:border-zinc-700 dark:text-gray-200 dark:hover:bg-zinc-800"
+                                    >
+                                        {isGeneratingTodayTodos ? '生成中...' : '生成今日待办'}
+                                    </button>
+                                )}
+                                {(isTaskPlanProject || isTodayTodoProject) && (
+                                    <button
+                                        onClick={() => void handleSyncTodayTodos()}
+                                        disabled={isSavingGlobalProject || isGeneratingTodayTodos || isSyncingTodayTodos}
+                                        className="rounded-md border border-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70 dark:border-zinc-700 dark:text-gray-200 dark:hover:bg-zinc-800"
+                                    >
+                                        {isSyncingTodayTodos ? '回写中...' : '回写完成情况'}
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                        {isGlobalProject && projectLastModifiedLabel && (
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500 transition-opacity opacity-0 group-hover/project-title:opacity-100 whitespace-nowrap" title="项目最近修改时间">
+                                {projectLastModifiedLabel}
+                            </span>
+                        )}
                     </div>
-                    <span className="text-[9px] text-gray-400 dark:text-gray-500 font-mono pl-0.5 hidden sm:block">LOCAL STORAGE</span>
                 </div>
             </div>
 
@@ -572,10 +1005,55 @@ const ResearchLogApp: React.FC = () => {
             <div className="flex items-center gap-2 flex-shrink-0 z-10">
             {/* View Options Group */}
             <div className="flex items-center bg-gray-50 dark:bg-zinc-800 rounded-lg p-0.5 border border-gray-100 dark:border-zinc-700 transition-colors">
+                    <div className="relative" ref={backgroundMenuRef}>
+                        <button
+                            onClick={() => setIsBackgroundMenuOpen((open) => !open)}
+                            className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors ${isBackgroundMenuOpen ? 'bg-[color:var(--flow-accent-soft)] text-[color:var(--flow-accent)] shadow dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent-muted)] dark:hover:text-[color:var(--flow-accent)]'}`}
+                            title="选择背景颜色"
+                        >
+                            <span className="inline-block h-3 w-3 rounded-full border border-white/70 shadow-sm" style={{ backgroundColor: activeBackgroundPreset.swatch }} />
+                            <span className="hidden sm:inline">背景</span>
+                            <IconChevronDown className={`h-3 w-3 transition-transform ${isBackgroundMenuOpen ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {isBackgroundMenuOpen && (
+                            <div className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border border-[color:var(--flow-accent-border)]/70 bg-white shadow-xl dark:border-[color:var(--flow-accent-border)] dark:bg-zinc-900 z-50">
+                                <div className="border-b border-gray-100 px-4 py-3 dark:border-zinc-800">
+                                    <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">背景颜色</div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400">全局应用设置，不随项目导入变化</div>
+                                </div>
+                                <div className="py-1">
+                                    {BACKGROUND_PRESETS.map((preset) => {
+                                        const selected = preset.id === backgroundPreset;
+                                        return (
+                                            <button
+                                                key={preset.id}
+                                                onClick={() => {
+                                                    dispatch({ type: 'SET_BACKGROUND_PRESET', payload: preset.id });
+                                                    setIsBackgroundMenuOpen(false);
+                                                }}
+                                                className={`flex w-full items-center gap-3 px-4 py-2 text-left transition-colors ${selected ? 'bg-[color:var(--flow-accent-soft)] text-[color:var(--flow-accent)] dark:bg-zinc-800 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:text-gray-200 dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)]'}`}
+                                            >
+                                                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/70 shadow-sm" style={{ backgroundColor: preset.swatch }}>
+                                                    {selected ? <IconSquare className="h-2.5 w-2.5 text-white" /> : null}
+                                                </span>
+                                                <span className="min-w-0 flex-1">
+                                                    <span className="block text-sm font-medium">{preset.label}</span>
+                                                    <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">{preset.description}</span>
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="w-px h-4 bg-gray-200 dark:bg-zinc-700 mx-1"></div>
+
                     {/* Theme Toggle */}
                     <button
                         onClick={() => dispatch({ type: 'TOGGLE_THEME' })}
-                        className="p-1.5 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 rounded-md"
+                        className="p-1.5 text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] rounded-md transition-colors"
                         title="Toggle Theme"
                     >
                         {isDark ? <IconMoon className="w-4 h-4" /> : <IconSun className="w-4 h-4" />}
@@ -587,14 +1065,14 @@ const ResearchLogApp: React.FC = () => {
                     <>
                             <button 
                                 onClick={() => dispatch({ type: 'SET_LAYOUT_MODE', payload: 'horizontal' })}
-                                className={`p-1.5 rounded-md ${state.layoutMode === 'horizontal' ? 'bg-white shadow text-blue-600 dark:bg-zinc-700 dark:text-blue-400' : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'}`}
+                                className={`p-1.5 rounded-md ${state.layoutMode === 'horizontal' ? 'bg-white shadow text-[color:var(--flow-accent)] dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent-muted)] dark:hover:text-[color:var(--flow-accent)]'}`}
                                 title="Side-by-side view"
                             >
                                 <IconLayoutHorizontal className="w-4 h-4" />
                             </button>
                             <button 
                                 onClick={() => dispatch({ type: 'SET_LAYOUT_MODE', payload: 'vertical' })}
-                                className={`p-1.5 rounded-md ${state.layoutMode === 'vertical' ? 'bg-white shadow text-blue-600 dark:bg-zinc-700 dark:text-blue-400' : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'}`}
+                                className={`p-1.5 rounded-md ${state.layoutMode === 'vertical' ? 'bg-white shadow text-[color:var(--flow-accent)] dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent-muted)] dark:hover:text-[color:var(--flow-accent)]'}`}
                                 title="Stacked view"
                             >
                                 <IconLayoutVertical className="w-4 h-4" />
@@ -606,7 +1084,7 @@ const ResearchLogApp: React.FC = () => {
                     {/* Outline Details Toggle */}
                     <button
                         onClick={() => dispatch({ type: 'TOGGLE_OUTLINE_DETAILS' })}
-                        className={`p-1.5 rounded-md ${state.ui.showOutlineDetails ? 'bg-white shadow text-blue-600 dark:bg-zinc-700 dark:text-blue-400' : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'}`}
+                        className={`p-1.5 rounded-md ${state.ui.showOutlineDetails ? 'bg-white shadow text-[color:var(--flow-accent)] dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent-muted)] dark:hover:text-[color:var(--flow-accent)]'}`}
                         title={state.ui.showOutlineDetails ? "Hide node descriptions" : "Show node descriptions"}
                     >
                         <IconListDetails className="w-4 h-4" />
@@ -615,14 +1093,14 @@ const ResearchLogApp: React.FC = () => {
 
             <button 
                     onClick={() => dispatch({ type: 'TOGGLE_STATS', payload: true })}
-                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:text-gray-400 dark:hover:bg-zinc-800 dark:hover:text-blue-400 rounded-lg transition-colors"
+                    className="p-2 text-gray-500 hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-gray-400 dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)] rounded-lg transition-colors"
                     title="Statistics"
                 >
                     <IconChart className="w-5 h-5" />
                 </button>
                 <button
                     onClick={() => dispatch({ type: 'TOGGLE_VERSIONS', payload: true })}
-                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:text-gray-400 dark:hover:bg-zinc-800 dark:hover:text-blue-400 rounded-lg transition-colors"
+                    className="p-2 text-gray-500 hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-gray-400 dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)] rounded-lg transition-colors"
                     title="Version History"
                 >
                     <IconGitCommit className="w-5 h-5" />
@@ -639,7 +1117,7 @@ const ResearchLogApp: React.FC = () => {
                                 handleSafeAction(performNewProject);
                             }
                         }}
-                        className={`flex items-center gap-1 p-2 rounded-lg transition-colors ${isNewProjectMenuOpen ? 'bg-gray-100 dark:bg-zinc-800 text-blue-600 dark:text-blue-400' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800'}`}
+                        className={`flex items-center gap-1 p-2 rounded-lg transition-colors ${isNewProjectMenuOpen ? 'bg-[color:var(--flow-accent-soft)] dark:bg-zinc-800 text-[color:var(--flow-accent)] dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:text-[color:var(--flow-accent-muted)] dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)]'}`}
                         title={state.focusedNodeId ? "New Project Options" : "New Empty Project"}
                     >
                         <IconFilePlus className="w-4 h-4" />
@@ -647,19 +1125,19 @@ const ResearchLogApp: React.FC = () => {
                     </button>
 
                     {isNewProjectMenuOpen && state.focusedNodeId && (
-                        <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-gray-100 dark:border-zinc-700 z-50">
+                        <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-[color:var(--flow-accent-border)]/70 dark:border-[color:var(--flow-accent-border)] z-50">
                             <div className="px-4 py-2 text-xs font-semibold text-gray-400 dark:text-zinc-500 uppercase tracking-wider border-b border-gray-100 dark:border-zinc-700 mb-1">
                                 Create New Project
                             </div>
                             <button 
                                 onClick={() => handleSafeAction(performNewProject)} 
-                                className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700"
+                                className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]"
                             >
                                 New Empty Project
                             </button>
                             <button 
                                 onClick={() => handleSafeAction(performExtractProject)} 
-                                className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700"
+                                className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]"
                             >
                                 Extract <span className="font-bold">"{getFocusedNodeText()}"</span>
                             </button>
@@ -669,7 +1147,7 @@ const ResearchLogApp: React.FC = () => {
 
                 <button 
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800 rounded-lg"
+                    className="p-2 text-[color:var(--flow-accent-muted)] hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:text-[color:var(--flow-accent-muted)] dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)] rounded-lg transition-colors"
                     title="Import JSON"
                 >
                     <IconUpload className="w-4 h-4" />
@@ -680,17 +1158,17 @@ const ResearchLogApp: React.FC = () => {
                 <div className="relative" ref={exportMenuRef}>
                     <button 
                         onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
-                        className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 rounded-lg shadow-sm transition-colors"
+                        className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-strong)] rounded-lg shadow-sm transition-colors"
                     >
                         <IconDownload className="w-4 h-4" />
                         <span className="hidden sm:inline">Export</span>
                     </button>
                     
                     {isExportMenuOpen && (
-                        <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-gray-100 dark:border-zinc-700 z-50">
-                            <button onClick={handleExportJson} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700">Export as JSON</button>
-                            <button onClick={handleExportMarkdown} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700">Export as Markdown</button>
-                            <button onClick={handleOpenGitPushModal} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-700">推送到 GitHub</button>
+                        <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-[color:var(--flow-accent-border)]/70 dark:border-[color:var(--flow-accent-border)] z-50">
+                            <button onClick={handleExportJson} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">Export as JSON</button>
+                            <button onClick={handleExportMarkdown} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">Export as Markdown</button>
+                            <button onClick={handleOpenGitPushModal} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">推送到 GitHub</button>
                         </div>
                     )}
                 </div>
@@ -703,7 +1181,7 @@ const ResearchLogApp: React.FC = () => {
                 // Mobile Layout (Drawer logic)
                 <div className="relative h-full w-full">
                     {/* Drawer is shown if NOT in editor mode */}
-                    <div className={`fixed inset-y-0 left-0 z-40 w-3/4 bg-white dark:bg-zinc-950 shadow-2xl transform transition-transform duration-300 ${viewMode !== 'editor' ? 'translate-x-0' : '-translate-x-full'}`}>
+                    <div className={`fixed inset-y-0 left-0 z-40 w-3/4 bg-white/62 dark:bg-zinc-950/62 backdrop-blur-sm shadow-2xl transform transition-transform duration-300 ${viewMode !== 'editor' ? 'translate-x-0' : '-translate-x-full'}`}>
                         <FocusArea />
                     </div>
                     {viewMode !== 'editor' && (
@@ -712,7 +1190,7 @@ const ResearchLogApp: React.FC = () => {
                             onClick={() => dispatch({ type: 'SET_VIEW_MODE', payload: 'editor' })} 
                         />
                     )}
-                    <div className="h-full w-full bg-white dark:bg-zinc-950">
+                    <div className="h-full w-full bg-white/62 dark:bg-zinc-950/62">
                         <DetailArea />
                     </div>
                 </div>
@@ -730,12 +1208,12 @@ const ResearchLogApp: React.FC = () => {
                         </SplitPane>
                     ) : viewMode === 'outline' ? (
                          // Outline Only: Show FocusArea full width
-                        <div className="h-full w-full bg-white dark:bg-zinc-950">
+                        <div className="h-full w-full bg-white/62 dark:bg-zinc-950/62">
                             <FocusArea />
                         </div>
                     ) : (
                         // Editor Only: Show DetailArea full width
-                        <div className="h-full w-full bg-white dark:bg-zinc-950">
+                        <div className="h-full w-full bg-white/62 dark:bg-zinc-950/62">
                             <DetailArea />
                         </div>
                     )}
@@ -768,7 +1246,7 @@ const ResearchLogApp: React.FC = () => {
                                 value={gitRepoUrl}
                                 onChange={(e) => setGitRepoUrl(e.target.value)}
                                 placeholder="https://github.com/your-name/your-repo.git"
-                                className="w-full rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-blue-500/30"
+                                className="w-full rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-[color:var(--flow-accent-border)]"
                             />
                             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                                 点击“开始推送”会自动保存仓库地址到本地浏览器，并固定推送到 main 分支。
@@ -780,7 +1258,7 @@ const ResearchLogApp: React.FC = () => {
                                     type="checkbox"
                                     checked={proxyEnabled}
                                     onChange={(e) => setProxyEnabled(e.target.checked)}
-                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    className="h-4 w-4 rounded border-gray-300 text-[color:var(--flow-accent)] focus:ring-[color:var(--flow-accent)]"
                                 />
                                 启用代理（仅本应用推送生效）
                             </label>
@@ -792,7 +1270,7 @@ const ResearchLogApp: React.FC = () => {
                                     onChange={(e) => setHttpProxy(e.target.value)}
                                     placeholder={DEFAULT_HTTP_PROXY}
                                     disabled={!proxyEnabled}
-                                    className="w-full rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-blue-500/30 disabled:opacity-60"
+                                    className="w-full rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-[color:var(--flow-accent-border)] disabled:opacity-60"
                                 />
                             </div>
                             <div>
@@ -803,7 +1281,7 @@ const ResearchLogApp: React.FC = () => {
                                     onChange={(e) => setHttpsProxy(e.target.value)}
                                     placeholder={DEFAULT_HTTPS_PROXY}
                                     disabled={!proxyEnabled}
-                                    className="w-full rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-blue-500/30 disabled:opacity-60"
+                                    className="w-full rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-[color:var(--flow-accent-border)] disabled:opacity-60"
                                 />
                             </div>
                         </div>
@@ -839,7 +1317,7 @@ const ResearchLogApp: React.FC = () => {
                         <button
                             onClick={handlePushToGithub}
                             disabled={gitPushStatus.type === 'loading' || gitPushStatus.type === 'testing'}
-                            className="px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+                            className="px-3 py-2 text-sm rounded-lg bg-[color:var(--flow-accent)] text-white hover:bg-[color:var(--flow-accent-strong)] disabled:opacity-60"
                         >
                             {gitPushStatus.type === 'loading' ? '推送中...' : '开始推送'}
                         </button>
