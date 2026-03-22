@@ -23,3 +23,6 @@ flow-projects/
 *.njsproj
 *.sln
 *.sw?
+
+devlog.md
+code_refine_codex.txt
