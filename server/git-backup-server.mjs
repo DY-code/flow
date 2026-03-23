@@ -1,10 +1,12 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const PORT = Number(process.env.FLOW_GIT_SERVER_PORT || 5174);
 const FLOW_PROJECTS_DIR = path.resolve(process.cwd(), 'flow-projects');
+const BACKUP_PROJECTS_DIRNAME = 'projects';
 const FLOW_GLOBAL_PROJECTS_DIR = path.join(FLOW_PROJECTS_DIR, 'global');
 const DEFAULT_GLOBAL_PROJECT_NAME = '任务计划';
 const TASK_PLAN_PROJECT_PATH = 'global/任务计划.json';
@@ -498,40 +500,112 @@ const runGit = (args, cwd, proxyOptions) =>
     });
   });
 
-const ensureRepository = async (repoUrl, proxyOptions) => {
-  await fs.mkdir(FLOW_PROJECTS_DIR, { recursive: true });
+const configureRepositoryIdentity = async (cwd, proxyOptions) => {
+  await runGit(['config', 'user.name', 'flow-backup'], cwd, proxyOptions).catch(() => {});
+  await runGit(['config', 'user.email', 'flow-backup@local'], cwd, proxyOptions).catch(() => {});
+};
 
-  const gitDir = path.join(FLOW_PROJECTS_DIR, '.git');
-  const hasGitDir = await fs
-    .access(gitDir)
+const hasPathChanged = async (cwd, pathname, proxyOptions) => {
+  const status = await runGit(['status', '--porcelain', '--', pathname], cwd, proxyOptions);
+  return status.stdout.trim().length > 0;
+};
+
+const pathExists = async (targetPath) =>
+  fs.access(targetPath)
     .then(() => true)
     .catch(() => false);
 
-  if (!hasGitDir) {
-    await runGit(['init'], FLOW_PROJECTS_DIR, proxyOptions);
+const collectLocalProjectFiles = async (directoryPath, baseDir = directoryPath) => {
+  const entries = await fs.readdir(directoryPath, { withFileTypes: true }).catch(() => []);
+  const files = [];
+
+  for (const entry of entries) {
+    if (entry.name === '.git') {
+      continue;
+    }
+
+    const fullPath = path.join(directoryPath, entry.name);
+
+    if (entry.isDirectory()) {
+      files.push(...(await collectLocalProjectFiles(fullPath, baseDir)));
+      continue;
+    }
+
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    files.push({
+      sourcePath: fullPath,
+      relativePath: path.relative(baseDir, fullPath).replace(/\\/g, '/')
+    });
   }
 
-  await runGit(['config', 'user.name', 'flow-backup'], FLOW_PROJECTS_DIR, proxyOptions).catch(() => {});
-  await runGit(['config', 'user.email', 'flow-backup@local'], FLOW_PROJECTS_DIR, proxyOptions).catch(() => {});
+  return files;
+};
 
-  let currentOrigin = '';
+const createBackupWorkspace = async (repoUrl, proxyOptions) => {
+  const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'flow-backup-'));
+
   try {
-    const remoteResult = await runGit(['remote', 'get-url', 'origin'], FLOW_PROJECTS_DIR, proxyOptions);
-    currentOrigin = remoteResult.stdout.trim();
-  } catch {
-    currentOrigin = '';
-  }
+    await runGit(['init'], workspaceDir, proxyOptions);
+    await configureRepositoryIdentity(workspaceDir, proxyOptions);
+    await runGit(['remote', 'add', 'origin', repoUrl], workspaceDir, proxyOptions);
 
-  if (!currentOrigin) {
-    await runGit(['remote', 'add', 'origin', repoUrl], FLOW_PROJECTS_DIR, proxyOptions);
-  } else if (currentOrigin !== repoUrl) {
-    await runGit(['remote', 'set-url', 'origin', repoUrl], FLOW_PROJECTS_DIR, proxyOptions);
+    let hasRemoteMain = false;
+
+    try {
+      await runGit(['fetch', 'origin', 'main'], workspaceDir, proxyOptions);
+      hasRemoteMain = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const canInitializeMain =
+        /couldn't find remote ref main/i.test(message) ||
+        /Remote branch main not found/i.test(message) ||
+        /Couldn't find remote ref refs\/heads\/main/i.test(message);
+
+      if (!canInitializeMain) {
+        throw error;
+      }
+    }
+
+    if (hasRemoteMain) {
+      await runGit(['checkout', '-B', 'main', 'origin/main'], workspaceDir, proxyOptions);
+    } else {
+      await runGit(['checkout', '--orphan', 'main'], workspaceDir, proxyOptions);
+    }
+
+    return workspaceDir;
+  } catch (error) {
+    await fs.rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
   }
 };
 
-const hasFileChanged = async (filename, proxyOptions) => {
-  const status = await runGit(['status', '--porcelain', '--', filename], FLOW_PROJECTS_DIR, proxyOptions);
-  return status.stdout.trim().length > 0;
+const mirrorProjectsToBackupWorkspace = async (workspaceDir) => {
+  const backupProjectsDir = path.join(workspaceDir, BACKUP_PROJECTS_DIRNAME);
+  const localFiles = await collectLocalProjectFiles(FLOW_PROJECTS_DIR);
+
+  for (const file of localFiles) {
+    const legacyPath = path.join(workspaceDir, file.relativePath);
+    if (await pathExists(legacyPath)) {
+      await fs.rm(legacyPath, { recursive: true, force: true });
+    }
+  }
+
+  await fs.rm(backupProjectsDir, { recursive: true, force: true }).catch(() => {});
+  await fs.mkdir(backupProjectsDir, { recursive: true });
+
+  for (const file of localFiles) {
+    const targetPath = path.join(backupProjectsDir, file.relativePath);
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.copyFile(file.sourcePath, targetPath);
+  }
+
+  return {
+    backupProjectsDir,
+    fileCount: localFiles.length
+  };
 };
 
 const normalizeProxyOptions = ({ proxyEnabled, httpProxy, httpsProxy }) => ({
@@ -564,7 +638,7 @@ const pushProject = async ({ repoUrl, projectName, projectData, proxyEnabled, ht
   }
 
   const proxyOptions = normalizeProxyOptions({ proxyEnabled, httpProxy, httpsProxy });
-  await ensureRepository(repoUrl.trim(), proxyOptions);
+  const trimmedRepoUrl = repoUrl.trim();
 
   const safeProjectName = sanitizeFilename(projectName);
   const requestedProjectPath = typeof projectData.currentProjectPath === 'string' && projectData.currentProjectPath.trim()
@@ -577,37 +651,36 @@ const pushProject = async ({ repoUrl, projectName, projectData, proxyEnabled, ht
   await fs.writeFile(resolvedPath, `${JSON.stringify(normalizedProjectData, null, 2)}
 `, 'utf-8');
 
-  await runGit(['add', '--', relativePath], FLOW_PROJECTS_DIR, proxyOptions);
-
-  if (!(await hasFileChanged(relativePath, proxyOptions))) {
-    await runGit(['branch', '-M', 'main'], FLOW_PROJECTS_DIR, proxyOptions);
-    await runGit(['push', '-u', 'origin', 'main'], FLOW_PROJECTS_DIR, proxyOptions).catch(() => {});
-    return {
-      message: `无文件变更，已同步远端分支。文件: flow-projects/${relativePath}`,
-      file: relativePath,
-      projectPath: relativePath,
-      changed: false
-    };
-  }
-
-  const commitMessage = `backup: ${safeProjectName} ${getNowStamp()}`;
-  await runGit(['commit', '-m', commitMessage], FLOW_PROJECTS_DIR, proxyOptions);
-  await runGit(['branch', '-M', 'main'], FLOW_PROJECTS_DIR, proxyOptions);
+  const backupProjectPath = path.posix.join(BACKUP_PROJECTS_DIRNAME, relativePath);
+  const workspaceDir = await createBackupWorkspace(trimmedRepoUrl, proxyOptions);
 
   try {
-    await runGit(['pull', '--rebase', 'origin', 'main'], FLOW_PROJECTS_DIR, proxyOptions);
-  } catch {
-    // Allow first-push or empty remote cases.
+    const { fileCount } = await mirrorProjectsToBackupWorkspace(workspaceDir);
+
+    await runGit(['add', '-A', '--', '.'], workspaceDir, proxyOptions);
+
+    if (!(await hasPathChanged(workspaceDir, '.', proxyOptions))) {
+      return {
+        message: `无文件变更，已同步远端分支。文件: ${backupProjectPath}`,
+        file: backupProjectPath,
+        projectPath: relativePath,
+        changed: false
+      };
+    }
+
+    const commitMessage = `backup: ${safeProjectName} ${getNowStamp()}`;
+    await runGit(['commit', '-m', commitMessage], workspaceDir, proxyOptions);
+    await runGit(['push', '-u', 'origin', 'main'], workspaceDir, proxyOptions);
+
+    return {
+      message: `推送成功: ${backupProjectPath}（已同步 ${fileCount} 个项目文件）`,
+      file: backupProjectPath,
+      projectPath: relativePath,
+      changed: true
+    };
+  } finally {
+    await fs.rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
   }
-
-  await runGit(['push', '-u', 'origin', 'main'], FLOW_PROJECTS_DIR, proxyOptions);
-
-  return {
-    message: `推送成功: flow-projects/${relativePath}`,
-    file: relativePath,
-    projectPath: relativePath,
-    changed: true
-  };
 };
 
 const server = createServer(async (req, res) => {
