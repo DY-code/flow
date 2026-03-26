@@ -1,104 +1,297 @@
 # Flow
 
-> 接管你的大脑工作记忆负载。让想法不丢、上下文不断、任务可回滚。  
-> Offload your working memory. Keep ideas alive, context intact, and progress recoverable.
+> 接管你的大脑工作记忆负载。让想法不丢、上下文不断、任务可回滚。
 
-Flow 是一个面向复杂思考与长期项目的本地优先工具，专注于把零散想法变成可执行的逻辑链。  
-Flow is a local-first tool for complex thinking and long-running projects, turning scattered thoughts into executable logic chains.
+Flow 是一个面向复杂思考、长期项目与研究整理场景的本地优先工具。它把零散想法组织成树状逻辑链，并配合 Markdown 编辑、版本回滚、导出备份与 PWA 离线能力，帮助你把“脑内暂存上下文”沉淀成可追溯、可恢复、可继续推进的工作流。
 
-## 你是否也在这些时刻卡住？ / Do You Get Stuck Here Too?
+## 适合谁
 
-- 想法很多，但脑内上下文容量有限，切一次任务就断线。  
-  Too many ideas, too little working memory. One context switch and the thread is gone.
-- 记录分散在文档、便签、聊天里，回看时无法还原当时思路。  
-  Notes are scattered across docs, chats, and snippets, making reasoning hard to reconstruct.
-- 项目推进到一半被打断，回来后很难从“原来的脑状态”继续。  
-  A project gets interrupted halfway, and resuming feels like starting over.
+- 需要长期维护复杂上下文的研究者、学生、写作者
+- 经常被打断，需要快速恢复工作现场的开发者、产品、内容创作者
+- 希望把临时思路、问题分析、行动计划沉淀成结构化记录的任何人
 
-## Flow 如何解决这些痛点 / How Flow Solves This
+## 核心能力
 
-- **逻辑链与思维流记录 / Logic Chain + Thought Flow Logging**  
-  用树状节点组织思路，把复杂问题拆成可追踪的结构。
-- **科研思路整理 / Research Reasoning Organizer**  
-  每个节点支持标题、摘要、正文，适合假设、证据、结论的逐层整理。
-- **工作流断点恢复 / Workflow Breakpoint Recovery**  
-  专注模式 + 版本历史 + 本地持久化，让你随时回到上一次有效思考现场。
+- 树状大纲编辑：把问题、假设、证据、结论、行动拆成节点结构
+- 双栏协同工作流：左侧看逻辑链，右侧写正文内容
+- 聚焦模式：只查看某个节点及其子树，减少噪音
+- Markdown 深度记录：支持正文编辑、预览、节点导入导出
+- 状态管理：节点支持 `waiting`、`inProgress`、`completed`、`onHold`
+- 版本回滚：保存关键版本，必要时回到稳定状态
+- 导出与备份：支持导出 `JSON`、`Markdown`，也可推送到 GitHub
+- PWA 离线体验：可安装为桌面应用，在离线环境继续使用
 
-## 核心特性 / Core Features
+## 界面与工作流概览
 
-- **树状大纲编辑 / Tree-Structured Outline Editing**  
-  快速插入、缩进、拖拽节点，搭建你的思维骨架。
-- **双视图协同 / Outline + Editor Split View**  
-  左侧看结构，右侧写内容，支持横向/纵向分栏切换。
-- **专注模式 / Focus Mode**  
-  锁定任一节点，仅查看其子树，降低噪音，保持深度思考。
-- **状态管理与统计 / Status Tracking + Stats**  
-  Waiting / In Progress / Completed / On Hold 一目了然。
-- **版本历史回滚 / Version History Rollback**  
-  保存关键节点，必要时一键回到稳定版本。
-- **导出与备份 / Export + Backup**  
-  支持导出 JSON / Markdown，并可直接推送到 GitHub（`main` 分支）。
-- **PWA 离线体验 / PWA Offline Experience**  
-  可安装为桌面应用，网络不稳定时也能继续工作。
+Flow 的使用方式可以理解为“左边搭结构，右边写内容”。
 
-## 快速开始 / Quick Start
+- 左侧 `Outline`：管理节点层级、顺序、状态和聚焦范围
+- 右侧 `Editor`：编辑当前节点的标题、摘要、正文，并可切换预览
+- 顶部工具区：切换视图、布局、显示细节、背景主题、导出与备份
+- `Focus Mode`：将某个节点作为当前上下文，仅查看该节点与其子树
 
-**前置要求 / Prerequisites**
+比较适合的典型流程是：
 
-- Node.js
+1. 新建一个项目，先搭出一级或二级节点骨架
+2. 逐个节点写标题、简述和正文内容
+3. 用状态标记当前进度，把不重要的节点先搁置
+4. 需要深挖时进入聚焦模式，专注处理一个局部问题
+5. 在关键阶段保存版本，并导出或推送到 GitHub 做备份
 
-**本地开发 / Local Development**
+## 快速开始
 
-1. 安装依赖 / Install dependencies
-   ```bash
-   npm install
-   ```
-2. 启动开发环境 / Start dev server
-   ```bash
-   npm run dev
-   ```
+### 前置要求
 
-## GitHub 备份推送 / GitHub Backup Push
+- Node.js 18 及以上
+- npm
 
-当你需要 `导出 -> 推送到 GitHub`：  
-Use this when you need `Export -> 推送到 GitHub`.
+### 安装依赖
 
-1. 确保本机已安装 `git` 且 GitHub 凭据可用。  
-   Ensure `git` is installed and GitHub credentials are already available.
-2. 同时启动前端与本地 git 备份服务：  
-   Start frontend + local git backup service together:
-   ```bash
-   npm run dev:all
-   ```
-3. 在应用中打开 `Export -> 推送到 GitHub`，填写仓库地址并开始推送。  
-   In app UI, open `Export -> 推送到 GitHub`, fill in repo URL, and push.
+```bash
+npm install
+```
 
-备份文件保存在项目根目录 `flow-projects/`，默认推送到 `main` 分支。  
-Backup files are stored under `flow-projects/` and pushed to `main`.
+### 启动本地开发环境
 
-## PWA 桌面安装（离线/独立） / PWA Desktop Install (Standalone/Offline)
+```bash
+npm run dev
+```
 
-不要在 `npm run dev` 模式下安装 PWA。  
-Do not install the PWA from `npm run dev`.
+默认会启动前端开发服务。启动后按终端输出地址在浏览器中打开即可。
 
-1. 构建并启动预览服务 / Build and start preview server
-   ```bash
-   npm run pwa:start
-   ```
-2. 打开 / Open `http://localhost:4173`
-3. 在浏览器地址栏或菜单中安装到桌面。  
-   Install to desktop from the browser menu/address bar.
+## 运行方式与 npm 脚本
 
-## 适合谁 / Who Is This For?
+项目当前包含以下常用脚本：
 
-- 需要长期维护复杂上下文的研究者与学生  
-  Researchers and students managing deep, evolving context
-- 经常处理中断与切换的开发者、产品和内容创作者  
-  Developers, PMs, and creators who frequently context-switch
-- 希望把“脑内临时记忆”变成“可追溯外部系统”的任何人  
-  Anyone who wants to externalize fragile mental context into a recoverable system
+| 脚本 | 用途 |
+| --- | --- |
+| `npm run dev` | 启动前端开发环境 |
+| `npm run dev:git` | 只启动本地 Git 备份服务 |
+| `npm run dev:all` | 同时启动前端和 Git 备份服务 |
+| `npm run build` | 构建生产版本 |
+| `npm run preview` | 本地预览构建产物 |
+| `npm run pwa:serve` | 以 `4173` 端口预览 PWA 构建结果 |
+| `npm run pwa:start` | 先构建，再启动 PWA 预览服务 |
 
----
+建议这样理解：
 
-如果你正在寻找一个不仅能“记笔记”，更能“接管思维负载”的工具，Flow 就是为你准备的。  
-If you need more than note-taking, and want a tool that truly offloads cognitive load, Flow is built for that.
+- 只想本地体验核心界面和编辑功能：使用 `npm run dev`
+- 需要测试“导出并推送到 GitHub”：使用 `npm run dev:all`
+- 需要安装 PWA 或验证离线体验：使用 `npm run pwa:start`
+
+## 基础使用流程
+
+### 1. 创建项目
+
+启动应用后，你可以从空白项目开始，也可以导入已有的项目数据。
+
+- 空白项目会自动创建一个初始根节点
+- 项目名称支持在界面顶部直接修改
+- 所有内容默认优先保存在浏览器本地存储中
+
+### 2. 在大纲中组织逻辑链
+
+左侧大纲区用于搭建结构。
+
+- 使用新增节点操作，把大问题拆成多个子问题或步骤
+- 通过缩进和反缩进表达父子层级
+- 为节点设置状态，区分待做、进行中、已完成、暂缓
+- 通过折叠、聚焦与隐藏 `onHold` 节点降低干扰
+
+如果你是用来整理研究、任务或写作，比较自然的方式是：
+
+- 一级节点放主题、阶段或章节
+- 二级节点放问题、假设、任务、材料或证据
+- 正文里再记录详细分析过程
+
+### 3. 编辑节点内容
+
+右侧编辑区对应当前选中的节点，通常包含三层信息：
+
+- 标题：节点名称
+- 摘要：用于快速说明节点意图
+- 正文：Markdown 正文，适合写分析、记录、结论、计划
+
+你可以在编辑区中：
+
+- 直接编辑 Markdown 内容
+- 在编辑和预览之间切换
+- 导出当前节点的 Markdown
+- 导入外部 `Markdown` / `txt` 内容追加到节点正文
+
+### 4. 使用视图与聚焦功能
+
+Flow 支持多种查看方式，适合不同设备和工作阶段。
+
+- `split`：同时查看大纲和编辑器，是默认工作模式
+- `editor`：只看编辑区，适合专注写作
+- `outline`：只看大纲，适合整理结构
+- 横向 / 纵向布局切换：适配不同屏幕和个人习惯
+- `Focus Mode`：只处理某个节点和它的子树
+
+### 5. 保存版本与回滚
+
+当你完成一个阶段性整理后，建议保存版本。
+
+- 应用支持保存版本历史
+- 可以在关键节点形成一个可回退的检查点
+- `Ctrl/Command + Shift + S` 会保存当前版本，并导出一个版本备份文件
+
+这对研究整理、方案推演、长文写作尤其有用，因为你可以放心尝试重组结构，而不必担心彻底丢失上一个稳定状态。
+
+### 6. 导出与备份
+
+项目支持多种导出方式：
+
+- 导出完整项目为 `JSON`，适合继续导入 Flow
+- 导出为 `Markdown`，适合归档或交给其他工具处理
+- 推送到 GitHub 仓库，适合长期备份和跨设备保存
+
+## 快捷键
+
+下面是当前项目中已经实现的快捷键说明。
+
+### 全局快捷键
+
+| 快捷键 | 作用 |
+| --- | --- |
+| `Ctrl/Command + Shift + S` | 保存当前版本，并导出一个版本备份文件 |
+
+### 大纲区快捷键
+
+| 快捷键 | 作用 |
+| --- | --- |
+| `ArrowUp` / `ArrowDown` | 在可见节点之间切换选中项 |
+| `Enter` | 在当前节点后插入新节点 |
+| `Shift + Enter` | 在当前节点前插入新节点 |
+| `F2` | 编辑当前节点标题 |
+| `Ctrl + Enter` | 编辑当前节点标题 |
+| `Tab` | 将当前节点缩进一级 |
+| `Shift + Tab` | 将当前节点反缩进一级 |
+| `Ctrl + ]` | 缩进当前节点及其整个子树 |
+| `Delete` / `Backspace` | 删除当前节点，子节点提升一级 |
+| `Ctrl/Command + Delete` 或 `Ctrl/Command + Backspace` | 删除当前节点及其全部子节点 |
+
+说明：
+
+- `Tab` / `Shift + Tab` 作用于当前节点本身
+- `Ctrl + ]` 作用于当前节点连同整个子树，适合整体调整结构层级
+
+### 编辑器快捷键
+
+| 快捷键 | 作用 |
+| --- | --- |
+| `Ctrl/Command + B` | 插入粗体标记 |
+| `Ctrl/Command + I` | 插入斜体标记 |
+| `Ctrl/Command + U` | 插入下划线标记 |
+| `Ctrl/Command + K` | 插入链接标记 |
+
+## GitHub 备份推送
+
+如果你要使用“导出并推送到 GitHub”，推荐按下面的方式操作。
+
+### 前置条件
+
+- 本机已安装 `git`
+- 当前环境已配置可用的 GitHub 凭据
+- 你准备好了目标仓库地址
+
+### 启动方式
+
+```bash
+npm run dev:all
+```
+
+这个命令会同时启动：
+
+- 前端应用
+- 本地 Git 备份服务，默认端口为 `5174`
+
+### 使用方式
+
+1. 在应用中打开 `Export`
+2. 选择“推送到 GitHub”
+3. 填写仓库地址
+4. 根据需要配置代理
+5. 执行推送
+
+### 备份文件位置
+
+推送相关的项目文件会保存在项目根目录下的 [flow-projects](/home/dycc/文档/A-app开发/flow/flow-projects) 中。
+
+默认约定：
+
+- 备份分支为 `main`
+- 项目文件以 `JSON` 形式保存
+- 全局项目会保存在 `flow-projects/global/` 下
+
+## PWA 安装与离线使用
+
+如果你希望把 Flow 当作桌面应用长期使用，建议安装 PWA 版本。
+
+### 正确启动方式
+
+不要在 `npm run dev` 模式下直接安装 PWA，建议使用：
+
+```bash
+npm run pwa:start
+```
+
+然后打开：
+
+```text
+http://localhost:4173
+```
+
+再从浏览器菜单或地址栏中执行安装。
+
+### 为什么这样做
+
+`npm run dev` 主要用于开发调试，而 PWA 的安装、缓存和离线能力更适合在构建产物预览环境中验证。使用 `pwa:start` 可以更接近真实安装体验。
+
+## 数据存储与项目文件说明
+
+Flow 是本地优先工具，数据主要围绕以下几类存储与导出方式展开：
+
+- 浏览器本地存储：用于日常编辑过程中的即时持久化
+- `JSON` 项目文件：用于完整导出、导入与 Git 备份
+- `Markdown` 文件：用于通用文本归档和内容迁移
+- 版本历史：用于保存关键阶段快照并在需要时回滚
+
+一个项目数据通常包含：
+
+- 节点树结构
+- 每个节点的正文内容
+- 当前激活节点与聚焦节点
+- 布局模式和部分界面设置
+- 项目元数据，例如创建时间、最后修改时间、最后导出时间
+
+## 注意事项
+
+- PWA 安装请使用 `npm run pwa:start`，不要直接在 `npm run dev` 环境安装
+- 如果要使用 GitHub 推送，必须先确认本机 `git` 与认证凭据可用
+- `Delete` / `Backspace` 会直接执行删除确认；删除子树不可撤销
+- 版本保存适合作为阶段性检查点，但仍建议定期导出 `JSON` 或推送到 GitHub 做额外备份
+
+## 项目结构简述
+
+当前项目的主要目录和文件如下：
+
+| 路径 | 说明 |
+| --- | --- |
+| [App.tsx](/home/dycc/文档/A-app开发/flow/App.tsx) | 应用主界面与顶层交互逻辑 |
+| [components/](/home/dycc/文档/A-app开发/flow/components) | 大纲树、编辑器、统计弹窗、版本弹窗等 UI 组件 |
+| [context/Store.tsx](/home/dycc/文档/A-app开发/flow/context/Store.tsx) | 全局状态管理、项目持久化、版本逻辑 |
+| [server/git-backup-server.mjs](/home/dycc/文档/A-app开发/flow/server/git-backup-server.mjs) | 本地 Git 备份服务 |
+| [utils/helpers.ts](/home/dycc/文档/A-app开发/flow/utils/helpers.ts) | 导出、下载、时间与通用辅助逻辑 |
+| [public/](/home/dycc/文档/A-app开发/flow/public) | PWA 相关静态资源，如 `manifest`、`sw.js`、离线页 |
+
+## 总结
+
+Flow 不只是一个记笔记工具，更适合承担“结构化思考工作台”的角色。它适合那些需要长期维护上下文、反复回到复杂问题现场、并希望把思考过程沉淀为可恢复工作流的人。
+
+如果你希望进一步完善它，最推荐的使用顺序是：
+
+1. 先用 `npm run dev` 熟悉基础编辑与结构整理
+2. 再用 `Ctrl/Command + Shift + S` 建立版本保存习惯
+3. 最后结合 `npm run dev:all` 和 GitHub 备份完成长期保存
