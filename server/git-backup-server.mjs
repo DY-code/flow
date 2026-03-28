@@ -300,6 +300,104 @@ const parseScheduledTask = (node) => {
   };
 };
 
+const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+const buildScheduledTitle = (title, dueDate) => `${String(title || '').trim()} [${dueDate}]`;
+
+const isPlaceholderTodayTodoNode = (node) => String(node?.text || '').trim() === '今日暂无任务';
+
+const findAncestorIndexByDepth = (nodes, startIndex, depth) => {
+  for (let i = startIndex - 1; i >= 0; i -= 1) {
+    if (nodes[i].depth === depth) return i;
+    if (nodes[i].depth < depth) return -1;
+  }
+  return -1;
+};
+
+const findCurrentWeekPlanIndex = (nodes, today) => {
+  for (let i = 0; i < nodes.length; i += 1) {
+    const scheduled = parseScheduledTask(nodes[i]);
+    if (!scheduled || scheduled.dueDate !== today) continue;
+    const weekIndex = findAncestorIndexByDepth(nodes, i, 1);
+    if (weekIndex !== -1) return weekIndex;
+  }
+  return -1;
+};
+
+const findSubtreeEndIndex = (nodes, startIndex) => {
+  const startDepth = nodes[startIndex]?.depth;
+  let endIndex = startIndex + 1;
+
+  while (endIndex < nodes.length && nodes[endIndex].depth > startDepth) {
+    endIndex += 1;
+  }
+
+  return endIndex;
+};
+
+const getWeekdayLabel = (dateString) => {
+  const date = new Date(`${dateString}T00:00:00`);
+  return WEEKDAY_LABELS[date.getDay()];
+};
+
+const findDayNodeIndexUnderWeek = (nodes, weekIndex, dayLabel) => {
+  const weekDepth = nodes[weekIndex]?.depth;
+  const searchEnd = findSubtreeEndIndex(nodes, weekIndex);
+
+  for (let i = weekIndex + 1; i < searchEnd; i += 1) {
+    const node = nodes[i];
+    if (node.depth <= weekDepth) break;
+    if (node.depth === weekDepth + 1 && typeof node.text === 'string' && node.text.trim().startsWith(dayLabel)) {
+      return i;
+    }
+  }
+
+  return -1;
+};
+
+const createTaskPlanTaskNodeFromTodo = ({ todoNode, dueDate, nowIso, id }) => ({
+  id,
+  text: buildScheduledTitle(todoNode.text || '未命名任务', dueDate),
+  desc: todoNode.desc || '',
+  status: todoNode.status,
+  depth: 3,
+  collapsed: false,
+  order: 0,
+  lastModified: nowIso
+});
+
+const ensureTodayDayNode = ({ nodes, weekIndex, dueDate, nowIso }) => {
+  const dayLabel = getWeekdayLabel(dueDate);
+  const existingDayIndex = findDayNodeIndexUnderWeek(nodes, weekIndex, dayLabel);
+  if (existingDayIndex !== -1) {
+    return { nodes, dayIndex: existingDayIndex };
+  }
+
+  const dayId = generateId();
+  const insertIndex = findSubtreeEndIndex(nodes, weekIndex);
+  const weekDepth = nodes[weekIndex].depth;
+  const dayNode = {
+    id: dayId,
+    text: dayLabel,
+    desc: '',
+    status: 'waiting',
+    depth: weekDepth + 1,
+    collapsed: false,
+    order: 0,
+    lastModified: nowIso
+  };
+  const nextNodes = [...nodes.slice(0, insertIndex), dayNode, ...nodes.slice(insertIndex)];
+  return { nodes: nextNodes, dayIndex: insertIndex };
+};
+
+const insertTaskUnderDayNode = ({ nodes, dayIndex, taskNode }) => {
+  const insertIndex = findSubtreeEndIndex(nodes, dayIndex);
+  return {
+    nodes: [...nodes.slice(0, insertIndex), taskNode, ...nodes.slice(insertIndex)],
+    insertedIndex: insertIndex
+  };
+};
+
 const buildTodayTodoProject = (taskPlanData) => {
   const nowIso = new Date().toISOString();
   const today = formatDateString();
@@ -393,27 +491,86 @@ const syncTodayTodos = async ({ todayTodoData }) => {
     : await readProjectFile(TODAY_TODO_PROJECT_PATH);
   const savedTaskPlan = await readProjectFile(TASK_PLAN_PROJECT_PATH);
   const nowIso = new Date().toISOString();
-  const updates = new Map(
-    savedTodayTodo.projectData.nodes
-      .filter((node) => node.sourceNodeId)
-      .map((node) => [node.sourceNodeId, node.status])
-  );
-
+  const today = formatDateString();
+  const todayTodoNodes = savedTodayTodo.projectData.nodes.map((node) => ({ ...node }));
+  const todayTodoContentMap = { ...savedTodayTodo.projectData.contentMap };
+  let taskPlanNodes = savedTaskPlan.projectData.nodes.map((node) => ({ ...node }));
+  const taskPlanContentMap = { ...savedTaskPlan.projectData.contentMap };
   let updatedCount = 0;
-  const syncedTaskPlanData = normalizeProjectData({
-    ...savedTaskPlan.projectData,
-    nodes: savedTaskPlan.projectData.nodes.map((node) => {
-      const nextStatus = updates.get(node.id);
-      if (!nextStatus || nextStatus === node.status) {
-        return node;
-      }
-      updatedCount += 1;
-      return {
-        ...node,
-        status: nextStatus,
+
+  todayTodoNodes.forEach((todoNode) => {
+    if (!todoNode.sourceNodeId) return;
+
+    const targetIndex = taskPlanNodes.findIndex((node) => node.id === todoNode.sourceNodeId);
+    if (targetIndex === -1) return;
+
+    const existingTarget = taskPlanNodes[targetIndex];
+    const existingScheduled = parseScheduledTask(existingTarget);
+    const dueDate = existingScheduled?.dueDate || today;
+    const baseTitle = String(todoNode.text || existingScheduled?.title || existingTarget.text || '未命名任务').trim();
+    const nextText = buildScheduledTitle(baseTitle, dueDate);
+    const nextDesc = todoNode.desc || '';
+    const nextBody = extractNodeBody(todayTodoContentMap, todoNode.id);
+
+    taskPlanNodes[targetIndex] = {
+      ...existingTarget,
+      text: nextText,
+      desc: nextDesc,
+      status: todoNode.status,
+      lastModified: nowIso
+    };
+    taskPlanContentMap[existingTarget.id] = buildNodeContent(nextText, nextDesc, nextBody);
+    updatedCount += 1;
+  });
+
+  const unsourcedTodoIndices = todayTodoNodes
+    .map((node, index) => ({ node, index }))
+    .filter(({ node }) => !node.sourceNodeId && !isPlaceholderTodayTodoNode(node));
+
+  if (unsourcedTodoIndices.length > 0) {
+    const weekIndex = findCurrentWeekPlanIndex(taskPlanNodes, today);
+    if (weekIndex === -1) {
+      throw new Error('未能在任务计划中找到当前日期所属的周计划节点，无法回写今日新增任务。');
+    }
+
+    let ensured = ensureTodayDayNode({ nodes: taskPlanNodes, weekIndex, dueDate: today, nowIso });
+    taskPlanNodes = ensured.nodes;
+    let dayIndex = ensured.dayIndex;
+
+    unsourcedTodoIndices.forEach(({ node: todoNode, index }) => {
+      const newTaskId = generateId();
+      const taskNode = createTaskPlanTaskNodeFromTodo({
+        todoNode,
+        dueDate: today,
+        nowIso,
+        id: newTaskId
+      });
+      const inserted = insertTaskUnderDayNode({ nodes: taskPlanNodes, dayIndex, taskNode });
+      taskPlanNodes = inserted.nodes;
+      taskPlanContentMap[newTaskId] = buildNodeContent(
+        taskNode.text,
+        todoNode.desc || '',
+        extractNodeBody(todayTodoContentMap, todoNode.id)
+      );
+      todayTodoNodes[index] = {
+        ...todayTodoNodes[index],
+        sourceNodeId: newTaskId,
         lastModified: nowIso
       };
-    }),
+      todayTodoContentMap[todayTodoNodes[index].id] = buildNodeContent(
+        todoNode.text || '未命名任务',
+        todoNode.desc || '',
+        extractNodeBody(todayTodoContentMap, todoNode.id)
+      );
+      updatedCount += 1;
+      dayIndex = findDayNodeIndexUnderWeek(taskPlanNodes, weekIndex, getWeekdayLabel(today));
+    });
+  }
+
+  const syncedTaskPlanData = normalizeProjectData({
+    ...savedTaskPlan.projectData,
+    nodes: taskPlanNodes,
+    contentMap: taskPlanContentMap,
     metadata: {
       ...savedTaskPlan.projectData.metadata,
       lastModified: nowIso,
@@ -422,13 +579,24 @@ const syncTodayTodos = async ({ todayTodoData }) => {
   }, TASK_PLAN_PROJECT_PATH);
 
   await writeProjectFile(TASK_PLAN_PROJECT_PATH, syncedTaskPlanData);
+  const syncedTodayTodoData = normalizeProjectData({
+    ...savedTodayTodo.projectData,
+    nodes: todayTodoNodes,
+    contentMap: todayTodoContentMap,
+    metadata: {
+      ...savedTodayTodo.projectData.metadata,
+      lastModified: nowIso,
+      lastExported: nowIso
+    }
+  }, TODAY_TODO_PROJECT_PATH);
+  await writeProjectFile(TODAY_TODO_PROJECT_PATH, syncedTodayTodoData);
 
   return {
     updatedCount,
     taskPlanProjectPath: TASK_PLAN_PROJECT_PATH,
     taskPlanData: syncedTaskPlanData,
-    todayTodoProjectPath: savedTodayTodo.projectPath,
-    todayTodoData: savedTodayTodo.projectData
+    todayTodoProjectPath: TODAY_TODO_PROJECT_PATH,
+    todayTodoData: syncedTodayTodoData
   };
 };
 

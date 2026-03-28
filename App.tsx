@@ -516,7 +516,7 @@ const ResearchLogApp: React.FC = () => {
       if (isTaskPlanProject) {
         dispatch({ type: 'IMPORT_DATA', payload: { data: result.taskPlanData, projectPath: result.taskPlanProjectPath } });
       } else if (isTodayTodoProject) {
-        dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+        dispatch({ type: 'IMPORT_DATA', payload: { data: result.todayTodoData, projectPath: result.todayTodoProjectPath } });
       }
       await loadRecentProjects();
       alert(`已回写完成情况，共同步 ${result.updatedCount ?? 0} 项。`);
@@ -608,7 +608,10 @@ const ResearchLogApp: React.FC = () => {
   const handleExportJson = async () => {
     const data: ProjectData = buildProjectData();
     const pickerId = buildProjectExportPickerId(data);
-    const saved = await downloadJson(data, `${getSafeFilename()}.json`, { pickerId });
+    const saved = await downloadJson(data, `${getSafeFilename()}.json`, {
+      pickerId,
+      confirmProjectName: state.projectName || 'Untitled Project'
+    });
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     }
@@ -618,7 +621,10 @@ const ResearchLogApp: React.FC = () => {
   const handleExportMarkdown = async () => {
     const data: ProjectData = buildProjectData();
     const pickerId = buildProjectExportPickerId(data);
-    const saved = await downloadMarkdown(data, `${getSafeFilename()}.md`, { pickerId });
+    const saved = await downloadMarkdown(data, `${getSafeFilename()}.md`, {
+      pickerId,
+      confirmProjectName: state.projectName || 'Untitled Project'
+    });
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     }
@@ -975,7 +981,7 @@ const ResearchLogApp: React.FC = () => {
                                         {isGeneratingTodayTodos ? '生成中...' : '生成今日待办'}
                                     </button>
                                 )}
-                                {(isTaskPlanProject || isTodayTodoProject) && (
+                                {isTodayTodoProject && (
                                     <button
                                         onClick={() => void handleSyncTodayTodos()}
                                         disabled={isSavingGlobalProject || isGeneratingTodayTodos || isSyncingTodayTodos}

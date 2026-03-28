@@ -2,6 +2,7 @@ import { ProjectData } from '../types';
 
 interface SaveFileOptions {
   pickerId?: string;
+  confirmProjectName?: string;
 }
 
 export const generateId = (length: number = 10): string => {
@@ -68,6 +69,22 @@ export const saveFile = async (
       }
 
       const handle = await (window as any).showSaveFilePicker(pickerOptions);
+      if (options.confirmProjectName) {
+        const confirmed = window.confirm(
+          [
+            '请确认本次导出信息：',
+            '',
+            `当前项目名：${options.confirmProjectName}`,
+            `即将导出的文件名：${handle.name || filename}`,
+            '',
+            '确认后将写入所选文件。'
+          ].join('\n')
+        );
+
+        if (!confirmed) {
+          return false;
+        }
+      }
       const writable = await handle.createWritable();
       await writable.write(content);
       await writable.close();
