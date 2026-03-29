@@ -607,11 +607,15 @@ const ResearchLogApp: React.FC = () => {
 
   const handleExportJson = async () => {
     const data: ProjectData = buildProjectData();
+    const confirmed = window.confirm(
+      `当前项目名为：${state.projectName || 'Untitled Project'}\n\n覆盖已有项目时，请注意选择正确的文件。`
+    );
+    if (!confirmed) {
+      setIsExportMenuOpen(false);
+      return;
+    }
     const pickerId = buildProjectExportPickerId(data);
-    const saved = await downloadJson(data, `${getSafeFilename()}.json`, {
-      pickerId,
-      confirmProjectName: state.projectName || 'Untitled Project'
-    });
+    const saved = await downloadJson(data, `${getSafeFilename()}.json`, { pickerId });
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     }
@@ -620,11 +624,15 @@ const ResearchLogApp: React.FC = () => {
 
   const handleExportMarkdown = async () => {
     const data: ProjectData = buildProjectData();
+    const confirmed = window.confirm(
+      `当前项目名为：${state.projectName || 'Untitled Project'}\n\n覆盖已有项目时，请注意选择正确的文件。`
+    );
+    if (!confirmed) {
+      setIsExportMenuOpen(false);
+      return;
+    }
     const pickerId = buildProjectExportPickerId(data);
-    const saved = await downloadMarkdown(data, `${getSafeFilename()}.md`, {
-      pickerId,
-      confirmProjectName: state.projectName || 'Untitled Project'
-    });
+    const saved = await downloadMarkdown(data, `${getSafeFilename()}.md`, { pickerId });
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     }
