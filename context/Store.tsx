@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
-import { LogNode, ContentMap, ProjectData, VersionEntry, NodeStatus, LayoutMode, OutlineMode, ViewMode, BackgroundPreset } from '../types';
+import { LogNode, ContentMap, ProjectData, VersionEntry, NodeStatus, LayoutMode, OutlineMode, ViewMode, BackgroundPreset, NodeClipboard } from '../types';
 import { generateId } from '../utils/helpers';
 
 // --- State Definition ---
@@ -7,6 +7,7 @@ interface State {
   projectName: string; 
   nodes: LogNode[];
   contentMap: ContentMap;
+  nodeClipboard: NodeClipboard | null;
   activeNodeId: string | null;
   focusedNodeId: string | null; // New: For Focus Mode
   currentProjectPath: string | null;
@@ -101,6 +102,85 @@ const buildProjectData = (state: State): ProjectData => ({
   }
 });
 
+const getSubtreeRange = (nodes: LogNode[], startIndex: number) => {
+  const rootNode = nodes[startIndex];
+  let endIndex = startIndex + 1;
+
+  while (endIndex < nodes.length && nodes[endIndex].depth > rootNode.depth) {
+    endIndex++;
+  }
+
+  return { rootNode, endIndex };
+};
+
+const cloneSubtreeToClipboard = (
+  nodes: LogNode[],
+  contentMap: ContentMap,
+  startIndex: number
+): NodeClipboard => {
+  const { rootNode, endIndex } = getSubtreeRange(nodes, startIndex);
+  const subtreeNodes = nodes.slice(startIndex, endIndex);
+
+  return {
+    nodes: subtreeNodes.map(node => ({
+      ...node,
+      depth: node.depth - rootNode.depth
+    })),
+    contentMap: subtreeNodes.reduce<ContentMap>((acc, node) => {
+      acc[node.id] = contentMap[node.id] || '';
+      return acc;
+    }, {})
+  };
+};
+
+const pasteClipboardSubtree = (
+  nodes: LogNode[],
+  contentMap: ContentMap,
+  clipboard: NodeClipboard,
+  targetIndex: number,
+  timestamp: string
+) => {
+  const { rootNode: targetNode, endIndex } = getSubtreeRange(nodes, targetIndex);
+  const idMap = new Map<string, string>();
+
+  const pastedNodes = clipboard.nodes.map(node => {
+    const newId = generateId();
+    idMap.set(node.id, newId);
+    return {
+      ...node,
+      id: newId,
+      depth: targetNode.depth + node.depth,
+      lastModified: timestamp
+    };
+  });
+
+  const normalizedPastedNodes = pastedNodes.map((node, index) => {
+    const sourceNodeId = clipboard.nodes[index].sourceNodeId;
+    return {
+      ...node,
+      sourceNodeId: sourceNodeId ? idMap.get(sourceNodeId) || sourceNodeId : undefined
+    };
+  });
+
+  const pastedContentMap = normalizedPastedNodes.reduce<ContentMap>((acc, node, index) => {
+    const sourceNode = clipboard.nodes[index];
+    acc[node.id] = clipboard.contentMap[sourceNode.id] || '';
+    return acc;
+  }, {});
+
+  const nextNodes = [...nodes];
+  nextNodes.splice(endIndex, 0, ...normalizedPastedNodes);
+
+  return {
+    nodes: nextNodes,
+    contentMap: {
+      ...contentMap,
+      ...pastedContentMap
+    },
+    activeNodeId: normalizedPastedNodes[0]?.id || targetNode.id
+  };
+};
+
 // Helper to create a fresh state object
 const createEmptyState = (isMobile: boolean): State => {
   const rootId = generateId();
@@ -115,6 +195,7 @@ const createEmptyState = (isMobile: boolean): State => {
       'root': '', 
       [rootId]: EMPTY_NODE_CONTENT
     },
+    nodeClipboard: null,
     activeNodeId: rootId,
     focusedNodeId: null,
     currentProjectPath: null,
@@ -171,6 +252,7 @@ const getInitialState = (): State => {
         ...parsed,
         projectName: parsed.projectName || DEFAULT_PROJECT_NAME,
         nodes,
+        nodeClipboard: null,
         activeNodeId,
         focusedNodeId,
         currentProjectPath: parsed.currentProjectPath || null,
@@ -210,6 +292,8 @@ const getInitialState = (): State => {
 type Action =
   | { type: 'SET_ACTIVE_NODE'; payload: string }
   | { type: 'SET_FOCUSED_NODE'; payload: string | null }
+  | { type: 'COPY_NODE_SUBTREE'; payload: string }
+  | { type: 'PASTE_NODE_SUBTREE'; payload: string }
   | { type: 'UPDATE_PROJECT_NAME'; payload: string }
   | { type: 'UPDATE_NODE_META'; payload: { id: string; text?: string; desc?: string } }
   | { type: 'UPDATE_CONTENT'; payload: { id: string; content: string } }
@@ -252,6 +336,39 @@ const reducer = (state: State, action: Action): State => {
 
     case 'SET_FOCUSED_NODE':
       return { ...state, focusedNodeId: action.payload };
+
+    case 'COPY_NODE_SUBTREE': {
+      const startIndex = state.nodes.findIndex(node => node.id === action.payload);
+      if (startIndex === -1) return state;
+
+      return {
+        ...state,
+        nodeClipboard: cloneSubtreeToClipboard(state.nodes, state.contentMap, startIndex)
+      };
+    }
+
+    case 'PASTE_NODE_SUBTREE': {
+      if (!state.nodeClipboard) return state;
+
+      const targetIndex = state.nodes.findIndex(node => node.id === action.payload);
+      if (targetIndex === -1) return state;
+
+      const pasted = pasteClipboardSubtree(
+        state.nodes,
+        state.contentMap,
+        state.nodeClipboard,
+        targetIndex,
+        now
+      );
+
+      return {
+        ...state,
+        nodes: pasted.nodes,
+        contentMap: pasted.contentMap,
+        activeNodeId: pasted.activeNodeId,
+        metadata: { ...state.metadata, lastModified: now }
+      };
+    }
 
     case 'UPDATE_PROJECT_NAME':
       return { 
@@ -407,6 +524,7 @@ const reducer = (state: State, action: Action): State => {
         ...state,
         nodes: processedNodes,
         contentMap: newContentMap,
+        nodeClipboard: null,
         activeNodeId: newActiveId,
         focusedNodeId: newFocusedNodeId,
         metadata: { ...state.metadata, lastModified: now }
@@ -578,6 +696,7 @@ const reducer = (state: State, action: Action): State => {
             nodes: newNodes,
             contentMap: newContentMap,
             currentProjectPath: null,
+            nodeClipboard: null,
             activeNodeId: newNodes[0].id,
             focusedNodeId: null, // Exit focus mode
             versions: [],
@@ -600,6 +719,7 @@ const reducer = (state: State, action: Action): State => {
         nodes: data.nodes,
         contentMap: data.contentMap,
         currentProjectPath: action.payload.projectPath ?? data.currentProjectPath ?? null,
+        nodeClipboard: null,
         layoutMode: data.layoutMode || 'horizontal',
         metadata: {
             ...data.metadata,
@@ -759,6 +879,7 @@ const reducer = (state: State, action: Action): State => {
             projectName: data.projectName || DEFAULT_PROJECT_NAME,
             nodes: data.nodes,
             contentMap: { ...data.contentMap, root: data.contentMap.root || '' },
+            nodeClipboard: null,
             currentProjectPath: data.currentProjectPath || state.currentProjectPath,
             layoutMode: data.layoutMode || 'horizontal',
             metadata: { ...data.metadata, lastModified: now },

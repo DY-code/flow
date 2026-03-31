@@ -21,6 +21,11 @@ export interface ContentMap {
   [key: string]: string;
 }
 
+export interface NodeClipboard {
+  nodes: LogNode[];
+  contentMap: ContentMap;
+}
+
 export interface ProjectData {
   projectName?: string; // Project Name
   nodes: LogNode[];

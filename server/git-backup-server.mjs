@@ -335,6 +335,104 @@ const findSubtreeEndIndex = (nodes, startIndex) => {
   return endIndex;
 };
 
+const isDescendantIndex = (nodes, ancestorIndex, targetIndex) => {
+  if (ancestorIndex < 0 || targetIndex <= ancestorIndex) return false;
+  return targetIndex < findSubtreeEndIndex(nodes, ancestorIndex);
+};
+
+const findClosestWeekdayParentIndex = (nodes, startIndex) => {
+  for (let i = startIndex - 1; i >= 0; i -= 1) {
+    const nodeText = String(nodes[i]?.text || '').trim();
+    if (WEEKDAY_LABELS.some((label) => nodeText.startsWith(label))) {
+      return i;
+    }
+  }
+  return -1;
+};
+
+const collectTodayScheduledRootIndices = (nodes, today) => {
+  const selectedIndices = [];
+
+  nodes.forEach((node, index) => {
+    const scheduled = parseScheduledTask(node);
+    if (!scheduled || scheduled.dueDate !== today) return;
+
+    const alreadyCovered = selectedIndices.some((selectedIndex) =>
+      isDescendantIndex(nodes, selectedIndex, index)
+    );
+
+    if (!alreadyCovered) {
+      selectedIndices.push(index);
+    }
+  });
+
+  return selectedIndices;
+};
+
+const cloneScheduledSubtreeForTodayTodo = ({
+  nodes,
+  contentMap,
+  startIndex,
+  order,
+  nowIso
+}) => {
+  const endIndex = findSubtreeEndIndex(nodes, startIndex);
+  const sourceSubtree = nodes.slice(startIndex, endIndex);
+  const rootNode = sourceSubtree[0];
+
+  const clonedNodes = [];
+  const clonedContentMap = {};
+
+  sourceSubtree.forEach((node, index) => {
+    const scheduled = index === 0 ? parseScheduledTask(node) : null;
+    const clonedId = generateId();
+    const nextText = scheduled ? scheduled.title : node.text;
+
+    clonedNodes.push({
+      id: clonedId,
+      text: nextText,
+      desc: node.desc || '',
+      status: node.status,
+      depth: node.depth - rootNode.depth,
+      collapsed: node.collapsed,
+      order,
+      lastModified: nowIso,
+      sourceNodeId: node.id
+    });
+
+    clonedContentMap[clonedId] = buildNodeContent(
+      nextText,
+      node.desc || '',
+      extractNodeBody(contentMap, node.id)
+    );
+  });
+
+  return {
+    nodes: clonedNodes,
+    contentMap: clonedContentMap
+  };
+};
+
+const buildTodayTodoRootContent = ({ nodes, contentMap, rootIndices }) => {
+  const usedDayIndices = new Set();
+  const sections = [];
+
+  rootIndices.forEach((rootIndex) => {
+    const dayIndex = findClosestWeekdayParentIndex(nodes, rootIndex);
+    if (dayIndex === -1 || usedDayIndices.has(dayIndex)) return;
+
+    usedDayIndices.add(dayIndex);
+    const dayNode = nodes[dayIndex];
+    sections.push(buildNodeContent(
+      dayNode.text || '未命名日期节点',
+      dayNode.desc || '',
+      extractNodeBody(contentMap, dayNode.id)
+    ));
+  });
+
+  return sections.join('\n\n---\n\n');
+};
+
 const getWeekdayLabel = (dateString) => {
   const date = new Date(`${dateString}T00:00:00`);
   return WEEKDAY_LABELS[date.getDay()];
@@ -402,26 +500,25 @@ const buildTodayTodoProject = (taskPlanData) => {
   const nowIso = new Date().toISOString();
   const today = formatDateString();
   const todayNodes = [];
-  const todayContentMap = { root: '' };
+  const scheduledRootIndices = collectTodayScheduledRootIndices(taskPlanData.nodes, today);
+  const todayContentMap = {
+    root: buildTodayTodoRootContent({
+      nodes: taskPlanData.nodes,
+      contentMap: taskPlanData.contentMap,
+      rootIndices: scheduledRootIndices
+    })
+  };
 
-  taskPlanData.nodes.forEach((node, index) => {
-    const scheduled = parseScheduledTask(node);
-    if (!scheduled || scheduled.dueDate !== today) return;
-
-    const todoNodeId = generateId();
-    const body = extractNodeBody(taskPlanData.contentMap, node.id);
-    todayNodes.push({
-      id: todoNodeId,
-      text: scheduled.title,
-      desc: node.desc || '',
-      status: node.status,
-      depth: 0,
-      collapsed: false,
-      order: index,
-      lastModified: nowIso,
-      sourceNodeId: node.id
+  scheduledRootIndices.forEach((rootIndex, order) => {
+    const clonedSubtree = cloneScheduledSubtreeForTodayTodo({
+      nodes: taskPlanData.nodes,
+      contentMap: taskPlanData.contentMap,
+      startIndex: rootIndex,
+      order,
+      nowIso
     });
-    todayContentMap[todoNodeId] = buildNodeContent(scheduled.title, node.desc || '', body);
+    todayNodes.push(...clonedSubtree.nodes);
+    Object.assign(todayContentMap, clonedSubtree.contentMap);
   });
 
   if (todayNodes.length === 0) {

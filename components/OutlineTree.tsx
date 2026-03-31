@@ -142,6 +142,20 @@ const OutlineTree: React.FC = () => {
   const handleContainerKeyDown = (e: React.KeyboardEvent) => {
     if (editingId) return; // Ignore tree nav if typing in an input
 
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && activeNodeId) {
+      e.preventDefault();
+      e.stopPropagation();
+      dispatch({ type: 'COPY_NODE_SUBTREE', payload: activeNodeId });
+      return;
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && activeNodeId) {
+      e.preventDefault();
+      e.stopPropagation();
+      dispatch({ type: 'PASTE_NODE_SUBTREE', payload: activeNodeId });
+      return;
+    }
+
     const activeIndex = visibleNodes.findIndex(n => n.id === activeNodeId);
     
     // If we can't find the active node in visible list, we can't navigate relative to it
