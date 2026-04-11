@@ -507,6 +507,7 @@ const ResearchLogApp: React.FC = () => {
         todayTodoProjectPath: string;
         todayTodoData: ProjectData;
         updatedCount?: number;
+        warning?: string;
         error?: string;
       };
       if (!response.ok) {
@@ -519,7 +520,11 @@ const ResearchLogApp: React.FC = () => {
         dispatch({ type: 'IMPORT_DATA', payload: { data: result.todayTodoData, projectPath: result.todayTodoProjectPath } });
       }
       await loadRecentProjects();
-      alert(`已回写完成情况，共同步 ${result.updatedCount ?? 0} 项。`);
+      const successMessage = [`已回写完成情况，共同步 ${result.updatedCount ?? 0} 项。`];
+      if (result.warning) {
+        successMessage.push(result.warning);
+      }
+      alert(successMessage.join('\n'));
     } catch (error: any) {
       alert(error?.message || '回写完成情况失败。');
     } finally {

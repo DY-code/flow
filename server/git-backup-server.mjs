@@ -300,6 +300,11 @@ const parseScheduledTask = (node) => {
   };
 };
 
+const stripScheduledDateSuffix = (text) => {
+  const parsed = parseScheduledTask({ text });
+  return parsed ? parsed.title : text;
+};
+
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
 const buildScheduledTitle = (title, dueDate) => `${String(title || '').trim()} [${dueDate}]`;
@@ -383,10 +388,9 @@ const cloneScheduledSubtreeForTodayTodo = ({
   const clonedNodes = [];
   const clonedContentMap = {};
 
-  sourceSubtree.forEach((node, index) => {
-    const scheduled = index === 0 ? parseScheduledTask(node) : null;
+  sourceSubtree.forEach((node) => {
     const clonedId = generateId();
-    const nextText = scheduled ? scheduled.title : node.text;
+    const nextText = stripScheduledDateSuffix(node.text);
 
     clonedNodes.push({
       id: clonedId,
@@ -451,6 +455,26 @@ const findDayNodeIndexUnderWeek = (nodes, weekIndex, dayLabel) => {
   }
 
   return -1;
+};
+
+const collectUniqueDayParentIndicesForTodayTodos = ({ todayTodoNodes, taskPlanNodes }) => {
+  const dayParentIndices = new Set();
+
+  todayTodoNodes.forEach((todoNode) => {
+    if (!todoNode.sourceNodeId) return;
+
+    const taskIndex = taskPlanNodes.findIndex((node) => node.id === todoNode.sourceNodeId);
+    if (taskIndex === -1) return;
+
+    const dayIndex = findClosestWeekdayParentIndex(taskPlanNodes, taskIndex);
+    if (dayIndex === -1) {
+      throw new Error(`未能为任务“${todoNode.text || '未命名任务'}”定位所属日节点，已中止回写。`);
+    }
+
+    dayParentIndices.add(dayIndex);
+  });
+
+  return Array.from(dayParentIndices);
 };
 
 const createTaskPlanTaskNodeFromTodo = ({ todoNode, dueDate, nowIso, id }) => ({
@@ -594,6 +618,7 @@ const syncTodayTodos = async ({ todayTodoData }) => {
   let taskPlanNodes = savedTaskPlan.projectData.nodes.map((node) => ({ ...node }));
   const taskPlanContentMap = { ...savedTaskPlan.projectData.contentMap };
   let updatedCount = 0;
+  let syncWarning;
 
   todayTodoNodes.forEach((todoNode) => {
     if (!todoNode.sourceNodeId) return;
@@ -664,6 +689,32 @@ const syncTodayTodos = async ({ todayTodoData }) => {
     });
   }
 
+  const uniqueDayParentIndices = collectUniqueDayParentIndicesForTodayTodos({
+    todayTodoNodes,
+    taskPlanNodes
+  });
+
+  if (uniqueDayParentIndices.length === 0) {
+    throw new Error('未能定位任务计划中当天对应的日节点，已中止回写。');
+  }
+
+  if (uniqueDayParentIndices.length > 1) {
+    syncWarning = '检测到今日待办任务对应多个日节点，已跳过日节点全局文本覆盖。';
+  } else {
+    const dayIndex = uniqueDayParentIndices[0];
+    const dayNode = taskPlanNodes[dayIndex];
+
+    if (!dayNode) {
+      throw new Error('未能定位任务计划中当天对应的日节点，已中止回写。');
+    }
+
+    taskPlanContentMap[dayNode.id] = buildNodeContent(
+      dayNode.text || '',
+      dayNode.desc || '',
+      savedTodayTodo.projectData.contentMap?.root || ''
+    );
+  }
+
   const syncedTaskPlanData = normalizeProjectData({
     ...savedTaskPlan.projectData,
     nodes: taskPlanNodes,
@@ -690,6 +741,7 @@ const syncTodayTodos = async ({ todayTodoData }) => {
 
   return {
     updatedCount,
+    warning: syncWarning,
     taskPlanProjectPath: TASK_PLAN_PROJECT_PATH,
     taskPlanData: syncedTaskPlanData,
     todayTodoProjectPath: TODAY_TODO_PROJECT_PATH,
