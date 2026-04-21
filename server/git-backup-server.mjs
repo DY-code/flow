@@ -86,6 +86,32 @@ const ensureProjectDataShape = (projectData) => {
   }
 };
 
+const decodeProjectText = (buffer) => {
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return new TextDecoder('utf-8').decode(buffer.subarray(3));
+  }
+
+  if (buffer.length >= 2) {
+    if (buffer[0] === 0xff && buffer[1] === 0xfe) {
+      return new TextDecoder('utf-16le').decode(buffer.subarray(2));
+    }
+    if (buffer[0] === 0xfe && buffer[1] === 0xff) {
+      return new TextDecoder('utf-16be').decode(buffer.subarray(2));
+    }
+  }
+
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder('gb18030').decode(buffer);
+  }
+};
+
+const readProjectTextFile = async (filePath) => {
+  const buffer = await fs.readFile(filePath);
+  return decodeProjectText(buffer);
+};
+
 const normalizeProjectData = (projectData, projectPath) => {
   ensureProjectDataShape(projectData);
   return {
@@ -108,18 +134,14 @@ const buildDefaultTaskPlanProject = () => {
   const template = [
     '# ',
     '',
-    '- 问题/情景',
-    '',
-    '- 原因/假设',
-    '',
-    '- 目标',
-    '',
-    '- 解决方案/行动',
-    '',
-    '- 结果',
-    '',
-    '- 下一步计划',
-    ''
+    '### 问题/情景',
+    '### 原因/假设',
+    '### 目标',
+    '### 解决方案/行动',
+    '### 任务简化细分',
+    '### 时间分配',
+    '### 结果',
+    '### 下一步计划'
   ].join('\n');
 
   return normalizeProjectData({
@@ -194,7 +216,7 @@ const resolveProjectPath = (relativePath) => {
 
 const readProjectFile = async (relativePath) => {
   const { resolvedPath, relativePath: normalizedPath } = resolveProjectPath(relativePath);
-  const fileContent = await fs.readFile(resolvedPath, 'utf-8');
+  const fileContent = await readProjectTextFile(resolvedPath);
   const projectData = normalizeProjectData(JSON.parse(fileContent), normalizedPath);
   return {
     projectPath: normalizedPath,
@@ -217,7 +239,7 @@ const isGlobalProjectPath = (projectPath) => typeof projectPath === 'string' && 
 
 const readProjectSummary = async (fullPath, relativePath) => {
   try {
-    const parsed = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
+    const parsed = JSON.parse(await readProjectTextFile(fullPath));
     return getProjectDisplayName(relativePath, parsed);
   } catch {
     return getProjectDisplayName(relativePath);
@@ -477,12 +499,12 @@ const collectUniqueDayParentIndicesForTodayTodos = ({ todayTodoNodes, taskPlanNo
   return Array.from(dayParentIndices);
 };
 
-const createTaskPlanTaskNodeFromTodo = ({ todoNode, dueDate, nowIso, id }) => ({
+const createTaskPlanTaskNodeFromTodo = ({ todoNode, dueDate, nowIso, id, depth }) => ({
   id,
   text: buildScheduledTitle(todoNode.text || '未命名任务', dueDate),
   desc: todoNode.desc || '',
   status: todoNode.status,
-  depth: 3,
+  depth,
   collapsed: false,
   order: 0,
   lastModified: nowIso
@@ -512,11 +534,55 @@ const ensureTodayDayNode = ({ nodes, weekIndex, dueDate, nowIso }) => {
   return { nodes: nextNodes, dayIndex: insertIndex };
 };
 
-const insertTaskUnderDayNode = ({ nodes, dayIndex, taskNode }) => {
-  const insertIndex = findSubtreeEndIndex(nodes, dayIndex);
+const insertTaskUnderParentNode = ({ nodes, parentIndex, taskNode }) => {
+  const insertIndex = findSubtreeEndIndex(nodes, parentIndex);
   return {
     nodes: [...nodes.slice(0, insertIndex), taskNode, ...nodes.slice(insertIndex)],
     insertedIndex: insertIndex
+  };
+};
+
+const findClosestSourcedTodoAncestor = (todayTodoNodes, startIndex) => {
+  const startDepth = todayTodoNodes[startIndex]?.depth;
+  if (typeof startDepth !== 'number' || startDepth <= 0) return null;
+
+  let nextAncestorDepth = startDepth - 1;
+  for (let i = startIndex - 1; i >= 0; i -= 1) {
+    const candidate = todayTodoNodes[i];
+    if (typeof candidate?.depth !== 'number' || candidate.depth > nextAncestorDepth) {
+      continue;
+    }
+
+    if (candidate.depth < nextAncestorDepth) {
+      nextAncestorDepth = candidate.depth;
+    }
+
+    if (candidate.sourceNodeId) {
+      return candidate;
+    }
+
+    nextAncestorDepth = candidate.depth - 1;
+    if (nextAncestorDepth < 0) return null;
+  }
+
+  return null;
+};
+
+const resolveTaskPlanParentForTodo = ({ todayTodoNodes, todoIndex, taskPlanNodes, dayIndex }) => {
+  const sourcedAncestor = findClosestSourcedTodoAncestor(todayTodoNodes, todoIndex);
+  if (sourcedAncestor?.sourceNodeId) {
+    const ancestorTaskPlanIndex = taskPlanNodes.findIndex((node) => node.id === sourcedAncestor.sourceNodeId);
+    if (ancestorTaskPlanIndex !== -1) {
+      return {
+        parentIndex: ancestorTaskPlanIndex,
+        parentNode: taskPlanNodes[ancestorTaskPlanIndex]
+      };
+    }
+  }
+
+  return {
+    parentIndex: dayIndex,
+    parentNode: taskPlanNodes[dayIndex]
   };
 };
 
@@ -660,14 +726,25 @@ const syncTodayTodos = async ({ todayTodoData }) => {
     let dayIndex = ensured.dayIndex;
 
     unsourcedTodoIndices.forEach(({ node: todoNode, index }) => {
+      const parent = resolveTaskPlanParentForTodo({
+        todayTodoNodes,
+        todoIndex: index,
+        taskPlanNodes,
+        dayIndex
+      });
+      if (!parent.parentNode) {
+        throw new Error(`未能为今日新增任务“${todoNode.text || '未命名任务'}”定位回写父节点，已中止回写。`);
+      }
+
       const newTaskId = generateId();
       const taskNode = createTaskPlanTaskNodeFromTodo({
         todoNode,
         dueDate: today,
         nowIso,
-        id: newTaskId
+        id: newTaskId,
+        depth: parent.parentNode.depth + 1
       });
-      const inserted = insertTaskUnderDayNode({ nodes: taskPlanNodes, dayIndex, taskNode });
+      const inserted = insertTaskUnderParentNode({ nodes: taskPlanNodes, parentIndex: parent.parentIndex, taskNode });
       taskPlanNodes = inserted.nodes;
       taskPlanContentMap[newTaskId] = buildNodeContent(
         taskNode.text,

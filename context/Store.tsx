@@ -48,6 +48,8 @@ const NEW_NODE_BODY_TEMPLATE = [
   '### 原因/假设',
   '### 目标',
   '### 解决方案/行动',
+  '### 任务简化细分',
+  '### 时间分配',
   '### 结果',
   '### 下一步计划'
 ].join('\n');
@@ -463,11 +465,9 @@ const reducer = (state: State, action: Action): State => {
       
       const newNodes = [...state.nodes];
       newNodes.splice(insertIdx, 0, newNode);
-      const newNodeContent = useTaskPlanDefaults
-        ? buildNodeContent(defaultTitle)
-        : state.ui.useNodeTemplate
-          ? `${EMPTY_NODE_CONTENT}${NEW_NODE_BODY_TEMPLATE}\n`
-          : EMPTY_NODE_CONTENT;
+      const newNodeContent = state.ui.useNodeTemplate
+        ? buildNodeContent(defaultTitle, '', NEW_NODE_BODY_TEMPLATE)
+        : buildNodeContent(defaultTitle);
       
       return {
         ...state,
