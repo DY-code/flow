@@ -4,7 +4,7 @@ import rehypeRaw from 'rehype-raw';
 import { useStore } from '../context/Store';
 import { IconEye, IconEdit, IconDownload, IconUpload } from './Icons';
 import StatusMenu from './StatusMenu'; 
-import { formatDate, sanitizeFilename, formatDateForFilename, saveFile } from '../utils/helpers';
+import { formatDate, sanitizeFilename, formatDateForFilename, saveFile, readTextFile } from '../utils/helpers';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 
@@ -440,13 +440,12 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
     saveFile(contentToExport, filename, 'text/markdown');
   };
 
-  const handleNodeImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleNodeImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
+    try {
+      const text = await readTextFile(file);
       if (text) {
           // Check if current node is empty
           // In Root mode, title is empty string, so we check body (rawContent)
@@ -507,9 +506,12 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                 }
           }
       }
-    };
-    reader.readAsText(file);
-    e.target.value = ''; // Reset input
+    } catch (err) {
+      console.error('Failed to import text file:', err);
+      alert('Failed to import file.');
+    } finally {
+      e.target.value = ''; // Reset input
+    }
   };
 
   // --- SHORTCUTS & FORMATTING ---

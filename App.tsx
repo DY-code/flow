@@ -5,14 +5,18 @@ import Editor from './components/Editor';
 import StatsModal from './components/StatsModal';
 import VersionsModal from './components/VersionsModal';
 import SplitPane from './components/SplitPane';
-import { 
+import TaskPlanImportModal from './components/TaskPlanImportModal';
+import {
     IconDownload, IconUpload, IconChart, IconMenu, 
     IconLayoutHorizontal, IconLayoutVertical, IconListDetails, IconFilePlus,
     IconSun, IconMoon, IconViewSplit, IconViewEditor, IconViewOutline,
     IconHome, IconChevronRight, IconChevronDown, IconGitCommit, IconMinus, IconSquare
 } from './components/Icons';
-import { downloadJson, downloadJsonDirect, downloadMarkdown, formatCompactDateTime, formatDateForFilename, sanitizeFilename } from './utils/helpers';
+import { downloadJson, downloadJsonDirect, downloadMarkdown, formatCompactDateTime, formatDateForFilename, sanitizeFilename, readTextFile } from './utils/helpers';
+import { cloneSubtreeIntoProject, countNodeDescendants } from './utils/projectImport';
 import { ProjectData, LogNode, BackgroundPreset } from './types';
+
+const TASK_PLAN_PROJECT_PATH = 'global/任务计划.json';
 
 interface RecentProjectEntry {
   name: string;
@@ -34,6 +38,36 @@ interface ProjectFileResponse {
   generatedCount?: number;
   updatedCount?: number;
 }
+
+const buildImportConfirmationMessage = ({
+  sourceNode,
+  descendantCount,
+  sourceProjectName,
+  sourceProjectPath,
+  targetProjectName,
+  targetProjectPath
+}: {
+  sourceNode: LogNode;
+  descendantCount: number;
+  sourceProjectName: string;
+  sourceProjectPath: string;
+  targetProjectName: string;
+  targetProjectPath: string;
+}) => [
+  '确定执行计划节点导入吗？',
+  '',
+  `源节点：${sourceNode.text || 'Untitled'}`,
+  `子节点数量：${descendantCount}`,
+  `源项目：${sourceProjectName || 'Untitled Project'}`,
+  `源路径：${sourceProjectPath}`,
+  `目标项目：${targetProjectName || 'Untitled Project'}`,
+  `目标路径：${targetProjectPath}`,
+  '导入位置：目标项目根级节点末尾',
+  '',
+  '说明：将复制该节点及全部子节点，并为复制出的节点生成新 ID；不会删除、合并或覆盖目标项目已有节点。'
+].join('\n');
+
+const getProjectPathLabel = (projectPath?: string | null): string => projectPath || '当前未保存项目';
 
 const buildProjectExportPickerId = (projectData: Pick<ProjectData, 'currentProjectPath' | 'metadata' | 'projectName'>): string => {
   const rawKey = projectData.currentProjectPath || projectData.metadata?.createdAt || projectData.projectName || 'untitled-project';
@@ -222,7 +256,8 @@ const ResearchLogApp: React.FC = () => {
   const backgroundPreset = state.ui.backgroundPreset;
   const currentProjectPath = state.currentProjectPath;
   const isGlobalProject = !!currentProjectPath && currentProjectPath.startsWith('global/');
-  const isTaskPlanProject = currentProjectPath === 'global/任务计划.json';
+  const isNonGlobalProject = !isGlobalProject;
+  const isTaskPlanProject = currentProjectPath === TASK_PLAN_PROJECT_PATH;
   const isTodayTodoProject = currentProjectPath === 'global/今日待办.json';
   const projectLastModifiedLabel = formatCompactDateTime(state.metadata.lastModified);
 
@@ -244,6 +279,14 @@ const ResearchLogApp: React.FC = () => {
   const [isSavingGlobalProject, setIsSavingGlobalProject] = useState(false);
   const [isGeneratingTodayTodos, setIsGeneratingTodayTodos] = useState(false);
   const [isSyncingTodayTodos, setIsSyncingTodayTodos] = useState(false);
+  const [isImportingPlanNode, setIsImportingPlanNode] = useState(false);
+  const [isTaskPlanImportModalOpen, setIsTaskPlanImportModalOpen] = useState(false);
+  const [taskPlanImportData, setTaskPlanImportData] = useState<ProjectData | null>(null);
+  const [selectedTaskPlanNodeId, setSelectedTaskPlanNodeId] = useState<string | null>(null);
+  const [taskPlanImportStatus, setTaskPlanImportStatus] = useState<{ type: 'idle' | 'loading' | 'error'; message: string }>({
+    type: 'idle',
+    message: ''
+  });
   const [isGitPushModalOpen, setIsGitPushModalOpen] = useState(false);
   const [gitRepoUrl, setGitRepoUrl] = useState('');
   const [proxyEnabled, setProxyEnabled] = useState(false);
@@ -532,27 +575,25 @@ const ResearchLogApp: React.FC = () => {
     }
   };
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const json = JSON.parse(event.target?.result as string) as ProjectData;
-        if (json.nodes && json.contentMap) {
-            if(window.confirm('Overwrite current project?')) {
-                dispatch({ type: 'IMPORT_DATA', payload: { data: json, projectPath: null } });
-            }
-        } else {
-            alert('Invalid file format.');
+    try {
+      const text = await readTextFile(file);
+      const json = JSON.parse(text) as ProjectData;
+      if (json.nodes && json.contentMap) {
+        if(window.confirm('Overwrite current project?')) {
+          dispatch({ type: 'IMPORT_DATA', payload: { data: json, projectPath: null } });
         }
-      } catch (err) {
-        alert('Failed to parse JSON.');
+      } else {
+        alert('Invalid file format.');
       }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
+    } catch (err) {
+      alert('Failed to parse JSON.');
+    } finally {
+      e.target.value = '';
+    }
   };
 
   const getSafeFilename = () => {
@@ -583,6 +624,131 @@ const ResearchLogApp: React.FC = () => {
       layoutMode: state.layoutMode,
       ui: state.ui
   });
+
+  const loadTaskPlanProject = async (): Promise<ProjectFileResponse> => {
+    const response = await fetch(`/api/projects/open?path=${encodeURIComponent(TASK_PLAN_PROJECT_PATH)}`);
+    const result = await response.json() as ProjectFileResponse & { error?: string };
+    if (!response.ok) {
+      throw new Error(result?.error || '读取任务计划失败');
+    }
+    return result;
+  };
+
+  const confirmBeforeOpeningTaskPlan = () => {
+    if (!hasUnsavedChanges && currentProjectPath) return true;
+
+    const lines = [
+      '当前项目不会自动保存。',
+      '导入到任务计划后将自动打开任务计划，当前项目的修改需要你之后手动保存、导出或推送。'
+    ];
+
+    if (!currentProjectPath) {
+      lines.push('当前项目没有绑定文件路径，请特别注意后续手动导出或推送保存。');
+    }
+
+    lines.push('', '是否继续？');
+    return window.confirm(lines.join('\n'));
+  };
+
+  const handleImportActiveNodeToTaskPlan = async () => {
+    if (!isNonGlobalProject) return;
+    const sourceNode = state.nodes.find((node) => node.id === state.activeNodeId);
+    if (!sourceNode) {
+      alert('请先在左侧大纲中点击选择一个要导入的节点。');
+      return;
+    }
+
+    const confirmed = window.confirm(buildImportConfirmationMessage({
+      sourceNode,
+      descendantCount: countNodeDescendants(state.nodes, sourceNode.id),
+      sourceProjectName: state.projectName,
+      sourceProjectPath: getProjectPathLabel(currentProjectPath),
+      targetProjectName: '任务计划',
+      targetProjectPath: TASK_PLAN_PROJECT_PATH
+    }));
+    if (!confirmed) return;
+    if (!confirmBeforeOpeningTaskPlan()) return;
+
+    setIsImportingPlanNode(true);
+    try {
+      const taskPlanProject = await loadTaskPlanProject();
+      const nextTaskPlanData = cloneSubtreeIntoProject({
+        sourceProject: buildProjectData(),
+        targetProject: taskPlanProject.projectData,
+        sourceNodeId: sourceNode.id
+      });
+      dispatch({
+        type: 'IMPORT_DATA',
+        payload: { data: nextTaskPlanData, projectPath: taskPlanProject.projectPath, markAsUnsaved: true }
+      });
+      await loadRecentProjects();
+      alert(`已导入到任务计划：${sourceNode.text || 'Untitled'}。请按需手动保存任务计划。`);
+    } catch (error: any) {
+      alert(error?.message || '导入到任务计划失败。');
+    } finally {
+      setIsImportingPlanNode(false);
+    }
+  };
+
+  const handleOpenTaskPlanImportModal = async () => {
+    if (!isNonGlobalProject) return;
+    setIsTaskPlanImportModalOpen(true);
+    setTaskPlanImportStatus({ type: 'loading', message: '' });
+    setTaskPlanImportData(null);
+    setSelectedTaskPlanNodeId(null);
+
+    try {
+      const result = await loadTaskPlanProject();
+      setTaskPlanImportData(result.projectData);
+      setTaskPlanImportStatus({ type: 'idle', message: '' });
+    } catch (error: any) {
+      setTaskPlanImportStatus({
+        type: 'error',
+        message: error?.message || '任务计划文件不存在或无法读取，请先创建任务计划。'
+      });
+    }
+  };
+
+  const handleImportSelectedTaskPlanNode = async () => {
+    if (!isNonGlobalProject || !taskPlanImportData || !selectedTaskPlanNodeId) return;
+    const sourceNode = taskPlanImportData.nodes.find((node) => node.id === selectedTaskPlanNodeId);
+    if (!sourceNode) {
+      alert('请先选择一个任务计划节点。');
+      return;
+    }
+
+    const confirmed = window.confirm(buildImportConfirmationMessage({
+      sourceNode,
+      descendantCount: countNodeDescendants(taskPlanImportData.nodes, sourceNode.id),
+      sourceProjectName: taskPlanImportData.projectName || '任务计划',
+      sourceProjectPath: TASK_PLAN_PROJECT_PATH,
+      targetProjectName: state.projectName,
+      targetProjectPath: getProjectPathLabel(currentProjectPath)
+    }));
+    if (!confirmed) return;
+
+    setIsImportingPlanNode(true);
+    try {
+      const nextProjectData = cloneSubtreeIntoProject({
+        sourceProject: taskPlanImportData,
+        targetProject: buildProjectData(),
+        sourceNodeId: sourceNode.id
+      });
+      dispatch({
+        type: 'IMPORT_DATA',
+        payload: { data: nextProjectData, projectPath: currentProjectPath, markAsUnsaved: true }
+      });
+      setIsTaskPlanImportModalOpen(false);
+      setTaskPlanImportData(null);
+      setSelectedTaskPlanNodeId(null);
+      await loadRecentProjects();
+      alert(`已从任务计划导入当前项目：${sourceNode.text || 'Untitled'}。请按需手动保存当前项目。`);
+    } catch (error: any) {
+      alert(error?.message || '从任务计划导入失败。');
+    } finally {
+      setIsImportingPlanNode(false);
+    }
+  };
 
   const getVersionBackupFilename = () => {
       const name = sanitizeFilename(state.projectName || 'flow');
@@ -971,6 +1137,26 @@ const ResearchLogApp: React.FC = () => {
                             }`} 
                             title={hasUnsavedChanges ? "Unexported changes" : hasCurrentVersionBackup ? "Current version backed up in Version History" : "All changes exported"}
                         />
+                        {isNonGlobalProject && (
+                            <div className="ml-1 flex items-center gap-1">
+                                <button
+                                    onClick={() => void handleImportActiveNodeToTaskPlan()}
+                                    disabled={isImportingPlanNode}
+                                    className="rounded-md border border-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70 dark:border-zinc-700 dark:text-gray-200 dark:hover:bg-zinc-800"
+                                    title="将当前高亮选中节点及其子节点导入任务计划"
+                                >
+                                    {isImportingPlanNode ? '导入中...' : '导入到任务计划'}
+                                </button>
+                                <button
+                                    onClick={() => void handleOpenTaskPlanImportModal()}
+                                    disabled={isImportingPlanNode}
+                                    className="rounded-md border border-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70 dark:border-zinc-700 dark:text-gray-200 dark:hover:bg-zinc-800"
+                                    title="从任务计划选择节点导入当前项目"
+                                >
+                                    从任务计划导入
+                                </button>
+                            </div>
+                        )}
                         {!isGlobalProject && projectLastModifiedLabel && (
                             <span className="text-[11px] text-gray-400 dark:text-gray-500 transition-opacity opacity-0 group-hover/project-title:opacity-100 whitespace-nowrap" title="项目最近修改时间">
                                 {projectLastModifiedLabel}
@@ -1242,6 +1428,19 @@ const ResearchLogApp: React.FC = () => {
 
         <StatsModal />
         <VersionsModal onSaveCurrentVersion={handleSaveCurrentVersion} />
+        <TaskPlanImportModal
+            isOpen={isTaskPlanImportModalOpen}
+            taskPlanData={taskPlanImportData}
+            selectedNodeId={selectedTaskPlanNodeId}
+            status={taskPlanImportStatus}
+            isImporting={isImportingPlanNode}
+            onSelectNode={setSelectedTaskPlanNodeId}
+            onConfirm={() => void handleImportSelectedTaskPlanNode()}
+            onClose={() => {
+                if (isImportingPlanNode) return;
+                setIsTaskPlanImportModalOpen(false);
+            }}
+        />
         {isGitPushModalOpen && (
             <div className="fixed inset-0 bg-black/40 z-[80] flex items-center justify-center p-4" onClick={() => setIsGitPushModalOpen(false)}>
                 <div

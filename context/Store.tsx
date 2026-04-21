@@ -306,7 +306,7 @@ type Action =
   | { type: 'OUTDENT_NODE'; payload: string }
   | { type: 'MOVE_NODE'; payload: { sourceId: string; targetId: string; position: 'top' | 'bottom' } }
   | { type: 'EXTRACT_PROJECT'; payload: string }
-  | { type: 'IMPORT_DATA'; payload: { data: ProjectData; projectPath?: string | null } }
+  | { type: 'IMPORT_DATA'; payload: { data: ProjectData; projectPath?: string | null; markAsUnsaved?: boolean } }
   | { type: 'RESET_PROJECT' }
   | { type: 'SET_MOBILE'; payload: boolean }
   | { type: 'TOGGLE_STATS'; payload: boolean }
@@ -723,7 +723,7 @@ const reducer = (state: State, action: Action): State => {
         layoutMode: data.layoutMode || 'horizontal',
         metadata: {
             ...data.metadata,
-            lastExported: now
+            lastExported: action.payload.markAsUnsaved ? data.metadata.lastExported : now
         },
         activeNodeId: importActiveNodeId,
         focusedNodeId: importFocusedNodeId,
