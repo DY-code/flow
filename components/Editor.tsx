@@ -506,9 +506,9 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                 }
           }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to import text file:', err);
-      alert('Failed to import file.');
+      alert(err?.message || 'Failed to import file.');
     } finally {
       e.target.value = ''; // Reset input
     }

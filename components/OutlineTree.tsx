@@ -38,7 +38,8 @@ const OutlineTree: React.FC = () => {
 
   // Focus the active node's input ONLY when entering edit mode
   useEffect(() => {
-    if (editingId && inputRefs.current[editingId]) {
+    if (editingId) {
+      setDraggableId(null);
       inputRefs.current[editingId]?.focus();
     }
   }, [editingId]);
@@ -291,7 +292,7 @@ const OutlineTree: React.FC = () => {
   // --- Drag & Drop Handlers ---
   
   const handleDragStart = (e: React.DragEvent, id: string) => {
-      if (!draggableId || draggableId !== id) {
+      if (editingId || !draggableId || draggableId !== id) {
           e.preventDefault();
           return;
       }
@@ -385,7 +386,7 @@ const OutlineTree: React.FC = () => {
         return (
           <div
             key={node.id}
-            draggable={draggableId === node.id}
+            draggable={!editingId && draggableId === node.id}
             onDragStart={(e) => handleDragStart(e, node.id)}
             onDragOver={(e) => handleDragOver(e, node.id)}
             onDrop={(e) => handleDrop(e, node.id)}
@@ -450,7 +451,9 @@ const OutlineTree: React.FC = () => {
                     {/* Drag Handle / Expander / Bullet */}
                     <div 
                         className="w-6 h-6 flex-shrink-0 flex items-center justify-center cursor-grab active:cursor-grabbing relative"
-                        onMouseEnter={() => setDraggableId(node.id)}
+                        onMouseEnter={() => {
+                            if (!editingId) setDraggableId(node.id);
+                        }}
                         onMouseLeave={() => setDraggableId(null)}
                         onClick={(e) => {
                             if (hasChildren) {

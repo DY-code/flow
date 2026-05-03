@@ -12,7 +12,17 @@ import {
     IconSun, IconMoon, IconViewSplit, IconViewEditor, IconViewOutline,
     IconHome, IconChevronRight, IconChevronDown, IconGitCommit, IconMinus, IconSquare
 } from './components/Icons';
-import { downloadJson, downloadJsonDirect, downloadMarkdown, formatCompactDateTime, formatDateForFilename, sanitizeFilename, readTextFile } from './utils/helpers';
+import {
+    buildMarkdownExport,
+    downloadJson,
+    downloadJsonDirect,
+    downloadMarkdown,
+    formatCompactDateTime,
+    formatDateForFilename,
+    overwriteFile,
+    sanitizeFilename,
+    readTextFile
+} from './utils/helpers';
 import { cloneSubtreeIntoProject, countNodeDescendants } from './utils/projectImport';
 import { ProjectData, LogNode, BackgroundPreset } from './types';
 
@@ -37,6 +47,12 @@ interface ProjectFileResponse {
   projectData: ProjectData;
   generatedCount?: number;
   updatedCount?: number;
+}
+
+interface OverwriteRiskConfirmData {
+  expectedPrefix: string;
+  targetFilename: string;
+  actualPrefix: string;
 }
 
 const buildImportConfirmationMessage = ({
@@ -78,6 +94,21 @@ const buildProjectExportPickerId = (projectData: Pick<ProjectData, 'currentProje
   }
 
   return `flow-export-${hash.toString(36)}`;
+};
+
+const EXPORT_TIMESTAMP_SUFFIX_PATTERN = /_\d{4}-\d{2}-\d{2}_\d{4}$/;
+
+const getExportTargetProjectPrefix = (filename: string, extension: 'json' | 'md'): string => {
+  const expectedExtension = `.${extension}`;
+  const nameWithoutExtension = filename.toLowerCase().endsWith(expectedExtension)
+    ? filename.slice(0, -expectedExtension.length)
+    : filename.replace(/\.[^/.]+$/, '');
+
+  return nameWithoutExtension.replace(EXPORT_TIMESTAMP_SUFFIX_PATTERN, '');
+};
+
+const getSafeProjectFilenameBase = (projectName?: string | null): string => {
+  return sanitizeFilename(projectName || 'flow') || 'flow';
 };
 
 const BACKGROUND_PRESETS: Array<{ id: BackgroundPreset; label: string; description: string; swatch: string; light: string; dark: string }> = [
@@ -264,6 +295,8 @@ const ResearchLogApp: React.FC = () => {
   // Export Menu State
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [overwriteRiskConfirm, setOverwriteRiskConfirm] = useState<OverwriteRiskConfirmData | null>(null);
+  const overwriteRiskConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
   const [isBackgroundMenuOpen, setIsBackgroundMenuOpen] = useState(false);
   const backgroundMenuRef = useRef<HTMLDivElement>(null);
   const [isRecentProjectsMenuOpen, setIsRecentProjectsMenuOpen] = useState(false);
@@ -302,6 +335,13 @@ const ResearchLogApp: React.FC = () => {
   const newProjectMenuRef = useRef<HTMLDivElement>(null);
   const [isEditingProjectName, setIsEditingProjectName] = useState(false);
   const projectNameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return () => {
+      overwriteRiskConfirmResolveRef.current?.(false);
+      overwriteRiskConfirmResolveRef.current = null;
+    };
+  }, []);
 
   // Unsaved Changes Logic
   const lastModifiedTs = new Date(state.metadata.lastModified).getTime();
@@ -589,8 +629,8 @@ const ResearchLogApp: React.FC = () => {
       } else {
         alert('Invalid file format.');
       }
-    } catch (err) {
-      alert('Failed to parse JSON.');
+    } catch (err: any) {
+      alert(err?.message || 'Failed to parse JSON.');
     } finally {
       e.target.value = '';
     }
@@ -598,7 +638,7 @@ const ResearchLogApp: React.FC = () => {
 
   const getSafeFilename = () => {
       // Allow unicode letters/numbers but remove system reserved characters
-      const name = (state.projectName || 'flow').replace(/[\\/:*?"<>|]/g, '_');
+      const name = getSafeProjectFilenameBase(state.projectName);
       
       // Use lastModified time, format YYYY-MM-DD_HHMM
       const dateObj = new Date(state.metadata.lastModified);
@@ -611,6 +651,32 @@ const ResearchLogApp: React.FC = () => {
       const dateStr = `${yyyy}-${mm}-${dd}_${hh}${min}`;
       
       return `${name}_${dateStr}`;
+  };
+
+  const resolveOverwriteRiskConfirm = (confirmed: boolean) => {
+    overwriteRiskConfirmResolveRef.current?.(confirmed);
+    overwriteRiskConfirmResolveRef.current = null;
+    setOverwriteRiskConfirm(null);
+  };
+
+  const confirmExportTargetName = async (targetFilename: string, extension: 'json' | 'md') => {
+    const expectedPrefix = getSafeProjectFilenameBase(state.projectName);
+    const actualPrefix = getExportTargetProjectPrefix(targetFilename, extension);
+
+    if (actualPrefix === expectedPrefix) {
+      return true;
+    }
+
+    overwriteRiskConfirmResolveRef.current?.(false);
+
+    return new Promise<boolean>((resolve) => {
+      overwriteRiskConfirmResolveRef.current = resolve;
+      setOverwriteRiskConfirm({
+        expectedPrefix,
+        targetFilename,
+        actualPrefix: actualPrefix || '无法识别'
+      });
+    });
   };
 
   const buildProjectData = (): ProjectData => ({
@@ -751,7 +817,7 @@ const ResearchLogApp: React.FC = () => {
   };
 
   const getVersionBackupFilename = () => {
-      const name = sanitizeFilename(state.projectName || 'flow');
+      const name = getSafeProjectFilenameBase(state.projectName);
       const dateStr = formatDateForFilename(new Date());
       return `${name}_${dateStr}.json`;
   };
@@ -808,6 +874,44 @@ const ResearchLogApp: React.FC = () => {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     }
     setIsExportMenuOpen(false);
+  };
+
+  const handleOverwriteJson = async () => {
+    const data: ProjectData = buildProjectData();
+
+    try {
+      const saved = await overwriteFile(JSON.stringify(data, null, 2), 'application/json', {
+        description: 'JSON File',
+        extensions: ['.json'],
+        validateTargetName: (targetFilename) => confirmExportTargetName(targetFilename, 'json')
+      });
+      if (saved) {
+        dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+      }
+    } catch (error: any) {
+      alert(error?.message || '覆盖 JSON 文件失败。');
+    } finally {
+      setIsExportMenuOpen(false);
+    }
+  };
+
+  const handleOverwriteMarkdown = async () => {
+    const data: ProjectData = buildProjectData();
+
+    try {
+      const saved = await overwriteFile(buildMarkdownExport(data), 'text/markdown', {
+        description: 'Markdown File',
+        extensions: ['.md'],
+        validateTargetName: (targetFilename) => confirmExportTargetName(targetFilename, 'md')
+      });
+      if (saved) {
+        dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+      }
+    } catch (error: any) {
+      alert(error?.message || '覆盖 Markdown 文件失败。');
+    } finally {
+      setIsExportMenuOpen(false);
+    }
   };
 
   const handleOpenGitPushModal = () => {
@@ -1370,9 +1474,13 @@ const ResearchLogApp: React.FC = () => {
                     </button>
                     
                     {isExportMenuOpen && (
-                        <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-[color:var(--flow-accent-border)]/70 dark:border-[color:var(--flow-accent-border)] z-50">
+                        <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-[color:var(--flow-accent-border)]/70 dark:border-[color:var(--flow-accent-border)] z-50">
                             <button onClick={handleExportJson} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">Export as JSON</button>
                             <button onClick={handleExportMarkdown} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">Export as Markdown</button>
+                            <div className="my-1 border-t border-gray-100 dark:border-zinc-700" />
+                            <button onClick={handleOverwriteJson} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">Overwrite JSON File</button>
+                            <button onClick={handleOverwriteMarkdown} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">Overwrite Markdown File</button>
+                            <div className="my-1 border-t border-gray-100 dark:border-zinc-700" />
                             <button onClick={handleOpenGitPushModal} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">推送到 GitHub</button>
                         </div>
                     )}
@@ -1441,6 +1549,62 @@ const ResearchLogApp: React.FC = () => {
                 setIsTaskPlanImportModalOpen(false);
             }}
         />
+        {overwriteRiskConfirm && (
+            <div
+                className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4"
+                onClick={() => resolveOverwriteRiskConfirm(false)}
+            >
+                <div
+                    className="w-full max-w-xl rounded-xl border border-red-200 bg-white shadow-2xl dark:border-red-900/60 dark:bg-zinc-900"
+                    onClick={(e) => e.stopPropagation()}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="overwrite-risk-title"
+                >
+                    <div className="border-b border-red-100 px-5 py-4 dark:border-red-900/50">
+                        <h3 id="overwrite-risk-title" className="text-lg font-semibold text-red-700 dark:text-red-300">
+                            高风险覆盖确认
+                        </h3>
+                    </div>
+                    <div className="space-y-4 px-5 py-4 text-sm text-gray-700 dark:text-gray-200">
+                        <div className="grid gap-3 sm:grid-cols-[104px_1fr]">
+                            <div className="font-medium text-gray-500 dark:text-gray-400">当前项目</div>
+                            <div className="break-all rounded-md bg-gray-50 px-3 py-2 font-medium text-gray-900 dark:bg-zinc-800 dark:text-gray-100">
+                                {overwriteRiskConfirm.expectedPrefix}
+                            </div>
+                            <div className="font-medium text-gray-500 dark:text-gray-400">覆盖文件</div>
+                            <div className="break-all rounded-md bg-red-50 px-3 py-2 font-medium text-red-800 dark:bg-red-950/30 dark:text-red-200">
+                                {overwriteRiskConfirm.targetFilename}
+                            </div>
+                            <div className="font-medium text-gray-500 dark:text-gray-400">识别项目</div>
+                            <div className="break-all rounded-md bg-gray-50 px-3 py-2 font-medium text-gray-900 dark:bg-zinc-800 dark:text-gray-100">
+                                {overwriteRiskConfirm.actualPrefix}
+                            </div>
+                        </div>
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                            继续操作会用当前项目内容覆盖该文件。如果你只是想导出新副本，请取消并使用 Export。
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                            取消不会修改目标文件；继续覆盖会写入当前项目内容。
+                        </p>
+                    </div>
+                    <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-4 dark:border-zinc-700">
+                        <button
+                            onClick={() => resolveOverwriteRiskConfirm(false)}
+                            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-zinc-600 dark:text-gray-200 dark:hover:bg-zinc-800"
+                        >
+                            取消，不覆盖
+                        </button>
+                        <button
+                            onClick={() => resolveOverwriteRiskConfirm(true)}
+                            className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
+                        >
+                            继续覆盖
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
         {isGitPushModalOpen && (
             <div className="fixed inset-0 bg-black/40 z-[80] flex items-center justify-center p-4" onClick={() => setIsGitPushModalOpen(false)}>
                 <div

@@ -4,6 +4,12 @@ interface SaveFileOptions {
   pickerId?: string;
 }
 
+interface OverwriteFileOptions {
+  description: string;
+  extensions: string[];
+  validateTargetName?: (filename: string) => boolean | Promise<boolean>;
+}
+
 export const generateId = (length: number = 10): string => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';
@@ -48,26 +54,25 @@ export const sanitizeFilename = (name: string): string => {
 
 const decodeText = (buffer: ArrayBuffer): string => {
   const bytes = new Uint8Array(buffer);
+  const invalidEncodingMessage = '文件编码不是有效 UTF-8。请先转换为 UTF-8 后再打开或导入。';
 
   if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
-    return new TextDecoder('utf-8').decode(bytes.subarray(3));
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(3));
   }
 
   if (bytes.length >= 2) {
     if (bytes[0] === 0xff && bytes[1] === 0xfe) {
-      return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+      return new TextDecoder('utf-16le', { fatal: true }).decode(bytes.subarray(2));
     }
     if (bytes[0] === 0xfe && bytes[1] === 0xff) {
-      return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+      return new TextDecoder('utf-16be', { fatal: true }).decode(bytes.subarray(2));
     }
   }
 
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
   } catch {
-    // Many Chinese .txt/.md files from Windows tools are GBK/GB18030.
-    // A UTF-8 fatal decode prevents silently storing replacement characters.
-    return new TextDecoder('gb18030').decode(buffer);
+    throw new Error(invalidEncodingMessage);
   }
 };
 
@@ -128,6 +133,44 @@ export const downloadJson = async (data: object, filename: string, options: Save
   return saveFile(JSON.stringify(data, null, 2), filename, 'application/json', options);
 };
 
+export const overwriteFile = async (
+  content: string,
+  contentType: string,
+  options: OverwriteFileOptions
+): Promise<boolean> => {
+  if (!('showOpenFilePicker' in window)) {
+    throw new Error('当前浏览器不支持安全覆盖，请使用 Export 导出或覆盖文件。');
+  }
+
+  try {
+    const [handle] = await (window as any).showOpenFilePicker({
+      multiple: false,
+      types: [{
+        description: options.description,
+        accept: { [contentType]: options.extensions },
+      }],
+    });
+
+    if (!handle) return false;
+
+    if (options.validateTargetName) {
+      const canSave = await options.validateTargetName(handle.name);
+      if (!canSave) return false;
+    }
+
+    const writable = await handle.createWritable();
+    await writable.write(content);
+    await writable.close();
+    return true;
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      return false;
+    }
+    console.error('File overwrite failed:', err);
+    throw err;
+  }
+};
+
 export const downloadJsonDirect = async (data: object, filename: string): Promise<boolean> => {
   // Force legacy download to skip File System Access API picker
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -142,7 +185,7 @@ export const downloadJsonDirect = async (data: object, filename: string): Promis
   return true;
 };
 
-export const downloadMarkdown = async (data: ProjectData, filename: string, options: SaveFileOptions = {}): Promise<boolean> => {
+export const buildMarkdownExport = (data: ProjectData): string => {
   // Use project name as H1
   let md = `# ${data.projectName || 'Flow Export'}\n\n`;
   
@@ -186,5 +229,9 @@ export const downloadMarkdown = async (data: ProjectData, filename: string, opti
       }
   });
 
-  return saveFile(md, filename, 'text/markdown', options);
+  return md;
+};
+
+export const downloadMarkdown = async (data: ProjectData, filename: string, options: SaveFileOptions = {}): Promise<boolean> => {
+  return saveFile(buildMarkdownExport(data), filename, 'text/markdown', options);
 };

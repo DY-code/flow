@@ -87,23 +87,25 @@ const ensureProjectDataShape = (projectData) => {
 };
 
 const decodeProjectText = (buffer) => {
+  const invalidEncodingMessage = '项目文件编码不是有效 UTF-8。请先转换为 UTF-8 后再打开。';
+
   if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
-    return new TextDecoder('utf-8').decode(buffer.subarray(3));
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(3));
   }
 
   if (buffer.length >= 2) {
     if (buffer[0] === 0xff && buffer[1] === 0xfe) {
-      return new TextDecoder('utf-16le').decode(buffer.subarray(2));
+      return new TextDecoder('utf-16le', { fatal: true }).decode(buffer.subarray(2));
     }
     if (buffer[0] === 0xfe && buffer[1] === 0xff) {
-      return new TextDecoder('utf-16be').decode(buffer.subarray(2));
+      return new TextDecoder('utf-16be', { fatal: true }).decode(buffer.subarray(2));
     }
   }
 
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
   } catch {
-    return new TextDecoder('gb18030').decode(buffer);
+    throw new Error(invalidEncodingMessage);
   }
 };
 
