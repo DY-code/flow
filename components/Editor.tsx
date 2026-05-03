@@ -60,9 +60,10 @@ const parsePreviewHeadings = (markdown: string): PreviewHeadingItem[] => {
 interface EditorProps {
   nodeId: string | null;
   isRoot?: boolean;
+  textReadOnly?: boolean;
 }
 
-const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
+const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textReadOnly = false }) => {
   const { state, dispatch } = useStore();
   const { contentMap, nodes, ui } = state;
   const [isPreview, setIsPreview] = useState(false);
@@ -124,6 +125,10 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
 
   // Track editing state for Title and Desc
   const [editingField, setEditingField] = useState<'title' | 'desc' | null>(null);
+
+  useEffect(() => {
+    if (textReadOnly) setEditingField(null);
+  }, [textReadOnly]);
 
   // --- SYNC LOGIC ---
   // Refs to track the LAST KNOWN external values to avoid overwriting local work with stale data
@@ -241,6 +246,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
   // --- UPDATE HANDLERS ---
   
   const updateContent = useCallback((newTitle: string, newDesc: string, newBody: string) => {
+      if (textReadOnly) return;
       const formattedTitle = `# ${newTitle}`;
       const formattedDesc = newDesc ? `> ${newDesc}` : ''; 
       const newFullContent = `${formattedTitle}\n${formattedDesc}\n${newBody}`;
@@ -254,10 +260,11 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
               payload: { id: nodeId, text: newTitle, desc: newDesc } 
           });
       }
-  }, [contentKey, isRoot, nodeId, dispatch]);
+  }, [contentKey, isRoot, nodeId, dispatch, textReadOnly]);
 
   // Real-time Title Change Handler
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      if (textReadOnly) return;
       const val = e.target.value;
       setTitle(val);
 
@@ -276,10 +283,11 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           updateContent(val, descRef.current, bodyRef.current);
           updateTimeoutRef.current = null;
       }, 700);
-  }, [isRoot, nodeId, dispatch, updateContent]);
+  }, [isRoot, nodeId, dispatch, updateContent, textReadOnly]);
 
   // Real-time Description Change Handler
   const handleDescChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      if (textReadOnly) return;
       const val = e.target.value;
       setDesc(val);
 
@@ -298,29 +306,32 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           updateContent(titleRef.current, val, bodyRef.current);
           updateTimeoutRef.current = null;
       }, 700);
-  }, [isRoot, nodeId, dispatch, updateContent]);
+  }, [isRoot, nodeId, dispatch, updateContent, textReadOnly]);
 
 
   // Commit handlers (Enter/Blur) - Force immediate update
   const handleTitleCommit = useCallback(() => {
+      if (textReadOnly) return;
       setEditingField(null);
       // Clear pending timeouts to avoid overwriting the immediate commit
       if (titleFastUpdateRef.current) clearTimeout(titleFastUpdateRef.current);
       if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
       
       updateContent(title, desc, body);
-  }, [title, desc, body, updateContent]);
+  }, [title, desc, body, updateContent, textReadOnly]);
 
   const handleDescCommit = useCallback(() => {
+      if (textReadOnly) return;
       setEditingField(null);
       if (descFastUpdateRef.current) clearTimeout(descFastUpdateRef.current);
       if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
 
       updateContent(title, desc, body);
-  }, [title, desc, body, updateContent]);
+  }, [title, desc, body, updateContent, textReadOnly]);
 
   // Debounced Body Change
   const handleBodyChange = useCallback((val: string) => {
+      if (textReadOnly) return;
       const textarea = document.getElementById(rootTextareaId) as HTMLTextAreaElement | null;
       if (textarea && !skipSelectionCaptureRef.current) {
           selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
@@ -336,10 +347,11 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           updateContent(titleRef.current, descRef.current, val);
           updateTimeoutRef.current = null;
       }, 700);
-  }, [updateContent]);
+  }, [updateContent, textReadOnly]);
 
   // Debounced Raw Change (for Root)
   const handleRawChange = useCallback((val: string) => {
+      if (textReadOnly) return;
       const textarea = document.getElementById(rootTextareaId) as HTMLTextAreaElement | null;
       if (textarea && !skipSelectionCaptureRef.current) {
           selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
@@ -354,9 +366,10 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           dispatch({ type: 'UPDATE_CONTENT', payload: { id: contentKey, content: val } });
           updateTimeoutRef.current = null;
       }, 700);
-  }, [contentKey, dispatch]);
+  }, [contentKey, dispatch, textReadOnly]);
 
   const handleFocusedBodyChange = useCallback((val: string) => {
+      if (textReadOnly) return;
       if (!focusedNode) return;
       const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
       if (textarea && !skipSelectionCaptureRef.current) {
@@ -375,7 +388,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
           dispatch({ type: 'UPDATE_CONTENT', payload: { id: focusedNode.id, content: newFullContent } });
           updateTimeoutRef.current = null;
       }, 700);
-  }, [focusedNode, dispatch, rootTextareaId]);
+  }, [focusedNode, dispatch, rootTextareaId, textReadOnly]);
 
   const restoreSelection = useCallback(() => {
       if (!shouldRestoreSelectionRef.current) return;
@@ -401,6 +414,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
 
   // Save immediately on blur
   const handleEditorBlur = useCallback(() => {
+      if (textReadOnly) return;
       if (updateTimeoutRef.current) {
           clearTimeout(updateTimeoutRef.current);
           updateTimeoutRef.current = null;
@@ -417,7 +431,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                updateContent(titleRef.current, descRef.current, body);
           }
       }
-  }, [isRoot, isRootFocusDisplay, focusedNode, contentKey, body, updateContent, dispatch]);
+  }, [isRoot, isRootFocusDisplay, focusedNode, contentKey, body, updateContent, dispatch, textReadOnly]);
 
   // --- NODE IMPORT / EXPORT HANDLERS ---
   
@@ -521,6 +535,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
     suffix: string, 
     placeholder: string = 'text'
   ) => {
+    if (textReadOnly) return;
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const text = textarea.value;
@@ -582,9 +597,10 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
             textarea.selectionEnd = newEnd;
         }
     }, 0);
-  }, [isRoot, contentKey, dispatch, updateContent]);
+  }, [isRoot, contentKey, dispatch, updateContent, textReadOnly]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (textReadOnly) return;
     // Only handle if Ctrl or Meta (Cmd) is pressed
     if (!e.ctrlKey && !e.metaKey) return;
 
@@ -629,7 +645,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
             }
             break;
     }
-  }, [insertFormat]);
+  }, [insertFormat, textReadOnly]);
 
   // Memoized highlight function to prevent cursor jumping on re-render/undo
   const highlightWithPrism = useCallback((code: string) => Prism.highlight(code, grammar, 'markdown'), []);
@@ -643,6 +659,8 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
 
   const rootDisplayContent = isRootFocusDisplay ? focusedBody : body;
   const previewScrollRef = useRef<HTMLDivElement>(null);
+  const editorRootRef = useRef<HTMLDivElement>(null);
+  const isPointerInsideRef = useRef(false);
   const previewMarkdown = isRoot ? rootDisplayContent : body;
 
   const previewHeadings = useMemo(() => {
@@ -680,6 +698,31 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
 
+  useEffect(() => {
+    const handlePreviewShortcut = (e: KeyboardEvent) => {
+      if (textReadOnly) return;
+      if ((!e.ctrlKey && !e.metaKey) || !e.shiftKey || e.altKey) return;
+      if (e.key.toLowerCase() !== 'v') return;
+
+      const activeElement = document.activeElement;
+      const hasFocusInside = !!activeElement && !!editorRootRef.current?.contains(activeElement);
+      const isTargetEditor = hasFocusInside || isPointerInsideRef.current;
+      if (!isTargetEditor) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      setIsPreview((preview) => !preview);
+    };
+
+    window.addEventListener('keydown', handlePreviewShortcut);
+    return () => window.removeEventListener('keydown', handlePreviewShortcut);
+  }, [isPreview, textReadOnly]);
+
+  const handlePreviewDoubleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsPreview(false);
+  }, []);
+
   // --- RENDER ---
   if (!isRoot && (!nodeId || !node)) {
     return (
@@ -693,14 +736,24 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
   }
 
   return (
-    <div className="h-full flex flex-col bg-white/62 dark:bg-zinc-950/62 backdrop-blur-sm relative group transition-colors">
+    <div
+      ref={editorRootRef}
+      tabIndex={-1}
+      className="h-full flex flex-col bg-white/62 dark:bg-zinc-950/62 backdrop-blur-sm relative group transition-colors"
+      onMouseEnter={() => {
+        isPointerInsideRef.current = true;
+      }}
+      onMouseLeave={() => {
+        isPointerInsideRef.current = false;
+      }}
+    >
       {/* Hidden File Input for Import */}
       <input type="file" ref={fileInputRef} onChange={handleNodeImport} accept=".md,.txt" className="hidden" />
 
       {/* Toolbar */}
       <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
           <span className="text-[10px] text-[color:var(--flow-accent-muted)] uppercase font-bold tracking-widest border border-gray-100 dark:border-zinc-800 px-2 py-1 rounded select-none transition-colors">
-              {isRoot ? 'GLOBAL CONTEXT' : 'DETAIL EDITOR'}
+              {textReadOnly ? 'TEXT READ ONLY' : isRoot ? 'GLOBAL CONTEXT' : 'DETAIL EDITOR'}
           </span>
           {isRoot && (
             <button
@@ -762,7 +815,10 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
             isPreview ? (
                 <div className="w-full h-full p-8">
                     <div className="mx-auto w-full max-w-4xl">
-                        <article className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert">
+                        <article
+                            className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert"
+                            onDoubleClick={handlePreviewDoubleClick}
+                        >
                             <Markdown rehypePlugins={[rehypeRaw]}>{rootDisplayContent || '*No content*'}</Markdown>
                         </article>
                     </div>
@@ -779,8 +835,9 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                             highlight={highlightWithPrism}
                             padding={0}
                             onKeyDown={handleKeyDown}
+                            readOnly={textReadOnly}
                             className="font-mono text-lg text-gray-800 dark:text-gray-200 min-h-[400px]"
-                            textareaClassName="focus:outline-none selection:bg-[color:var(--flow-accent-soft)] selection:text-[color:var(--flow-accent-strong)]"
+                            textareaClassName={`focus:outline-none selection:bg-[color:var(--flow-accent-soft)] selection:text-[color:var(--flow-accent-strong)] ${textReadOnly ? 'cursor-default' : ''}`}
                             style={editorStyle}
                         />
                     </div>
@@ -793,7 +850,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                 {/* Header Section */}
                 <div className="mb-2 flex items-end justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                        {editingField === 'title' ? (
+                        {!textReadOnly && editingField === 'title' ? (
                             <input
                                 ref={titleInputRef}
                                 type="text"
@@ -806,8 +863,10 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                             />
                         ) : (
                             <h1 
-                                className={`text-3xl font-bold p-0 cursor-text select-none ${title ? 'text-gray-900 dark:text-gray-100' : 'text-gray-300 dark:text-zinc-600'}`}
-                                onDoubleClick={() => setEditingField('title')}
+                                className={`text-3xl font-bold p-0 select-none ${textReadOnly ? 'cursor-default' : 'cursor-text'} ${title ? 'text-gray-900 dark:text-gray-100' : 'text-gray-300 dark:text-zinc-600'}`}
+                                onDoubleClick={() => {
+                                    if (!textReadOnly) setEditingField('title');
+                                }}
                             >
                                 {title || 'Untitled Node'}
                             </h1>
@@ -853,7 +912,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                 {/* Description */}
                 {ui.showOutlineDetails && (
                     <div>
-                        {editingField === 'desc' ? (
+                        {!textReadOnly && editingField === 'desc' ? (
                             <input
                                 ref={descInputRef}
                                 type="text"
@@ -866,8 +925,10 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                             />
                         ) : (
                             <p 
-                                className={`text-lg p-0 cursor-text select-none ${desc ? 'text-gray-500 dark:text-gray-400' : 'text-gray-300 dark:text-zinc-600 italic'}`}
-                                onDoubleClick={() => setEditingField('desc')}
+                                className={`text-lg p-0 select-none ${textReadOnly ? 'cursor-default' : 'cursor-text'} ${desc ? 'text-gray-500 dark:text-gray-400' : 'text-gray-300 dark:text-zinc-600 italic'}`}
+                                onDoubleClick={() => {
+                                    if (!textReadOnly) setEditingField('desc');
+                                }}
                             >
                                 {desc || 'Double-click to add description...'}
                             </p>
@@ -880,7 +941,10 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                 {/* Body / Editor */}
                 {isPreview ? (
                     <div>
-                        <article className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert">
+                        <article
+                            className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert"
+                            onDoubleClick={handlePreviewDoubleClick}
+                        >
                             <Markdown rehypePlugins={[rehypeRaw]}>{body || '*No content*'}</Markdown>
                         </article>
                     </div>
@@ -894,8 +958,9 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false }) => {
                             highlight={highlightWithPrism}
                             padding={0}
                             onKeyDown={handleKeyDown}
+                            readOnly={textReadOnly}
                             className="font-mono text-lg text-gray-800 dark:text-gray-200 min-h-[400px]"
-                            textareaClassName="focus:outline-none selection:bg-[color:var(--flow-accent-soft)] selection:text-[color:var(--flow-accent-strong)]"
+                            textareaClassName={`focus:outline-none selection:bg-[color:var(--flow-accent-soft)] selection:text-[color:var(--flow-accent-strong)] ${textReadOnly ? 'cursor-default' : ''}`}
                             style={editorStyle}
                         />
                     </div>

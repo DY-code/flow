@@ -8,7 +8,7 @@ import SplitPane from './components/SplitPane';
 import TaskPlanImportModal from './components/TaskPlanImportModal';
 import {
     IconDownload, IconUpload, IconChart, IconMenu, 
-    IconLayoutHorizontal, IconLayoutVertical, IconListDetails, IconFilePlus,
+    IconLayoutHorizontal, IconListDetails, IconFilePlus,
     IconSun, IconMoon, IconViewSplit, IconViewEditor, IconViewOutline,
     IconHome, IconChevronRight, IconChevronDown, IconGitCommit, IconMinus, IconSquare
 } from './components/Icons';
@@ -157,7 +157,7 @@ const ACCENT_PRESETS: Record<BackgroundPreset, { accent: string; accentStrong: s
 
 const FocusArea: React.FC = () => {
     const { state, dispatch } = useStore();
-    const internalSplit = state.layoutMode === 'vertical' ? 'vertical' : 'horizontal';
+    const internalSplit = 'horizontal';
 
     // Breadcrumb Logic
     const getBreadcrumbs = () => {
@@ -246,12 +246,12 @@ const FocusArea: React.FC = () => {
                 <SplitPane 
                     key={internalSplit} 
                     split={internalSplit} 
-                    initialSize={internalSplit === 'vertical' ? '40%' : '60%'}
+                    initialSize="60%"
                 >
-                    <div className={`h-full flex flex-col ${internalSplit === 'vertical' ? 'border-r border-gray-200 dark:border-zinc-700' : ''}`}>
+                    <div className="h-full flex flex-col">
                         <OutlineTree />
                     </div>
-                    <div className={`h-full flex flex-col ${internalSplit === 'horizontal' ? 'border-t border-gray-200 dark:border-zinc-700' : ''}`}>
+                    <div className="h-full flex flex-col border-t border-gray-200 dark:border-zinc-700">
                         <Editor 
                             nodeId={null} 
                             isRoot={true} 
@@ -267,6 +267,45 @@ const FocusArea: React.FC = () => {
 const DetailArea: React.FC = () => {
     const { state } = useStore();
     return <Editor nodeId={state.activeNodeId} key={state.activeNodeId || 'empty'} />;
+};
+
+interface DetailPaneProps {
+    pane: 0 | 1;
+}
+
+const DetailPane: React.FC<DetailPaneProps> = ({ pane }) => {
+    const { state, dispatch } = useStore();
+    const nodeId = state.detailPaneNodeIds[pane];
+    const isActivePane = state.activeDetailPane === pane;
+
+    return (
+        <div
+            className={`h-full min-h-0 border-2 transition-colors ${
+                isActivePane
+                    ? 'border-[color:var(--flow-accent-border)]'
+                    : 'border-transparent opacity-90'
+            }`}
+            onMouseDown={() => dispatch({ type: 'SET_ACTIVE_DETAIL_PANE', payload: pane })}
+        >
+            <Editor
+                nodeId={nodeId}
+                textReadOnly={!isActivePane}
+                key={`detail-pane-${pane}-${nodeId || 'empty'}`}
+            />
+        </div>
+    );
+};
+
+const DualDetailArea: React.FC = () => {
+    const { state } = useStore();
+    const split = state.dualDetailLayout === 'stacked' ? 'horizontal' : 'vertical';
+
+    return (
+        <SplitPane key={`dual-detail-${state.dualDetailLayout}`} split={split} initialSize="50%">
+            <DetailPane pane={0} />
+            <DetailPane pane={1} />
+        </SplitPane>
+    );
 };
 
 // --- Main App Component ---
@@ -684,6 +723,8 @@ const ResearchLogApp: React.FC = () => {
       nodes: state.nodes,
       contentMap: state.contentMap,
       activeNodeId: state.activeNodeId,
+      detailPaneNodeIds: state.detailPaneNodeIds,
+      activeDetailPane: state.activeDetailPane,
       focusedNodeId: state.focusedNodeId,
       currentProjectPath: state.currentProjectPath,
       metadata: state.metadata,
@@ -1372,20 +1413,39 @@ const ResearchLogApp: React.FC = () => {
                     {/* Layout Toggle (Only valid if Split View is active and on Desktop) */}
                     {!isMobile && viewMode === 'split' && (
                     <>
-                            <button 
+                            <button
                                 onClick={() => dispatch({ type: 'SET_LAYOUT_MODE', payload: 'horizontal' })}
                                 className={`p-1.5 rounded-md ${state.layoutMode === 'horizontal' ? 'bg-white shadow text-[color:var(--flow-accent)] dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent-muted)] dark:hover:text-[color:var(--flow-accent)]'}`}
                                 title="Side-by-side view"
                             >
                                 <IconLayoutHorizontal className="w-4 h-4" />
                             </button>
-                            <button 
-                                onClick={() => dispatch({ type: 'SET_LAYOUT_MODE', payload: 'vertical' })}
-                                className={`p-1.5 rounded-md ${state.layoutMode === 'vertical' ? 'bg-white shadow text-[color:var(--flow-accent)] dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent-muted)] dark:hover:text-[color:var(--flow-accent)]'}`}
-                                title="Stacked view"
+                            <button
+                                onClick={() => dispatch({ type: 'SET_LAYOUT_MODE', payload: 'dual' })}
+                                className={`p-1.5 rounded-md ${state.layoutMode === 'dual' ? 'bg-white shadow text-[color:var(--flow-accent)] dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent-muted)] dark:hover:text-[color:var(--flow-accent)]'}`}
+                                title="Dual editor view"
                             >
-                                <IconLayoutVertical className="w-4 h-4" />
+                                <IconViewSplit className="w-4 h-4" />
                             </button>
+                            {state.layoutMode === 'dual' && (
+                                <>
+                                    <div className="w-px h-4 bg-gray-200 dark:bg-zinc-700 mx-1"></div>
+                                    <button
+                                        onClick={() => dispatch({ type: 'SET_DUAL_DETAIL_LAYOUT', payload: 'side-by-side' })}
+                                        className={`p-1.5 rounded-md ${state.dualDetailLayout === 'side-by-side' ? 'bg-white shadow text-[color:var(--flow-accent)] dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent-muted)] dark:hover:text-[color:var(--flow-accent)]'}`}
+                                        title="Dual editors side-by-side"
+                                    >
+                                        <IconLayoutHorizontal className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                        onClick={() => dispatch({ type: 'SET_DUAL_DETAIL_LAYOUT', payload: 'stacked' })}
+                                        className={`p-1.5 rounded-md ${state.dualDetailLayout === 'stacked' ? 'bg-white shadow text-[color:var(--flow-accent)] dark:bg-zinc-700 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:text-[color:var(--flow-accent)] hover:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent-muted)] dark:hover:text-[color:var(--flow-accent)]'}`}
+                                        title="Dual editors stacked"
+                                    >
+                                        <IconViewSplit className="w-4 h-4 rotate-90" />
+                                    </button>
+                                </>
+                            )}
                             <div className="w-px h-4 bg-gray-200 dark:bg-zinc-700 mx-1"></div>
                     </>
                     )}
@@ -1513,11 +1573,11 @@ const ResearchLogApp: React.FC = () => {
                     {viewMode === 'split' ? (
                         <SplitPane 
                             key={state.layoutMode} 
-                            split={state.layoutMode === 'horizontal' ? 'vertical' : 'horizontal'} 
-                            initialSize={state.layoutMode === 'horizontal' ? '30%' : '50%'}
+                            split="vertical"
+                            initialSize="30%"
                         >
                             <FocusArea />
-                            <DetailArea />
+                            {state.layoutMode === 'dual' ? <DualDetailArea /> : <DetailArea />}
                         </SplitPane>
                     ) : viewMode === 'outline' ? (
                          // Outline Only: Show FocusArea full width

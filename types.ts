@@ -1,6 +1,8 @@
 
 export type NodeStatus = 'waiting' | 'inProgress' | 'completed' | 'onHold';
-export type LayoutMode = 'horizontal' | 'vertical';
+export type LayoutMode = 'horizontal' | 'dual';
+export type DetailPaneIndex = 0 | 1;
+export type DualDetailLayout = 'side-by-side' | 'stacked';
 export type OutlineMode = 'tree' | 'list';
 export type ViewMode = 'split' | 'editor' | 'outline';
 export type BackgroundPreset = 'default' | 'warm' | 'mist' | 'sage';
@@ -31,6 +33,9 @@ export interface ProjectData {
   nodes: LogNode[];
   contentMap: ContentMap;
   activeNodeId?: string | null;
+  detailPaneNodeIds?: [string | null, string | null];
+  activeDetailPane?: DetailPaneIndex;
+  dualDetailLayout?: DualDetailLayout;
   focusedNodeId?: string | null;
   currentProjectPath?: string | null;
   layoutMode: LayoutMode;

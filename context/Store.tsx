@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
-import { LogNode, ContentMap, ProjectData, VersionEntry, NodeStatus, LayoutMode, OutlineMode, ViewMode, BackgroundPreset, NodeClipboard } from '../types';
+import { LogNode, ContentMap, ProjectData, VersionEntry, NodeStatus, LayoutMode, OutlineMode, ViewMode, BackgroundPreset, NodeClipboard, DetailPaneIndex, DualDetailLayout } from '../types';
 import { generateId } from '../utils/helpers';
 
 // --- State Definition ---
@@ -9,6 +9,9 @@ interface State {
   contentMap: ContentMap;
   nodeClipboard: NodeClipboard | null;
   activeNodeId: string | null;
+  detailPaneNodeIds: [string | null, string | null];
+  activeDetailPane: DetailPaneIndex;
+  dualDetailLayout: DualDetailLayout;
   focusedNodeId: string | null; // New: For Focus Mode
   currentProjectPath: string | null;
   versions: VersionEntry[];
@@ -65,6 +68,54 @@ const resolveActiveNodeId = (nodes: LogNode[], activeNodeId?: string | null): st
   return nodes.some(node => node.id === activeNodeId) ? activeNodeId : nodes[0].id;
 };
 
+const normalizeLayoutMode = (layoutMode?: string | null): LayoutMode => {
+  return layoutMode === 'dual' ? 'dual' : 'horizontal';
+};
+
+const normalizeDualDetailLayout = (layout?: string | null): DualDetailLayout => {
+  return layout === 'stacked' ? 'stacked' : 'side-by-side';
+};
+
+const isDetailPaneIndex = (value: unknown): value is DetailPaneIndex => value === 0 || value === 1;
+
+const resolveDetailPaneNodeIds = (
+  nodes: LogNode[],
+  activeNodeId: string | null,
+  paneNodeIds?: [string | null, string | null] | null
+): [string | null, string | null] => {
+  const hasNode = (id?: string | null) => !!id && nodes.some(node => node.id === id);
+  const first = hasNode(paneNodeIds?.[0]) ? paneNodeIds![0] : activeNodeId;
+  const second = hasNode(paneNodeIds?.[1]) ? paneNodeIds![1] : null;
+  return [first, second];
+};
+
+const resolveActiveDetailPane = (
+  paneNodeIds: [string | null, string | null],
+  activeNodeId: string | null,
+  activeDetailPane?: unknown
+): DetailPaneIndex => {
+  if (isDetailPaneIndex(activeDetailPane) && paneNodeIds[activeDetailPane]) return activeDetailPane;
+  const activePane = paneNodeIds.findIndex(id => id === activeNodeId);
+  return activePane === 1 ? 1 : 0;
+};
+
+const assignNodeToDetailPane = (state: State, nodeId: string) => {
+  const paneNodeIds: [string | null, string | null] = [...state.detailPaneNodeIds];
+  const existingPane = paneNodeIds.findIndex(id => id === nodeId);
+  const emptyPane = paneNodeIds.findIndex(id => !id || !state.nodes.some(node => node.id === id));
+  const targetPane = state.layoutMode === 'dual'
+    ? (existingPane !== -1 ? existingPane : emptyPane !== -1 ? emptyPane : state.activeDetailPane)
+    : 0;
+
+  paneNodeIds[targetPane as DetailPaneIndex] = nodeId;
+
+  return {
+    activeNodeId: nodeId,
+    detailPaneNodeIds: paneNodeIds,
+    activeDetailPane: targetPane as DetailPaneIndex
+  };
+};
+
 const getTodayDateString = () => {
   const now = new Date();
   const yyyy = now.getFullYear();
@@ -86,6 +137,9 @@ const buildProjectData = (state: State): ProjectData => ({
   nodes: state.nodes,
   contentMap: state.contentMap,
   activeNodeId: state.activeNodeId,
+  detailPaneNodeIds: state.detailPaneNodeIds,
+  activeDetailPane: state.activeDetailPane,
+  dualDetailLayout: state.dualDetailLayout,
   focusedNodeId: state.focusedNodeId,
   currentProjectPath: state.currentProjectPath,
   layoutMode: state.layoutMode,
@@ -199,6 +253,9 @@ const createEmptyState = (isMobile: boolean): State => {
     },
     nodeClipboard: null,
     activeNodeId: rootId,
+    detailPaneNodeIds: [rootId, null],
+    activeDetailPane: 0,
+    dualDetailLayout: 'side-by-side',
     focusedNodeId: null,
     currentProjectPath: null,
     versions: [],
@@ -248,6 +305,8 @@ const getInitialState = (): State => {
         lastModified: n.lastModified || parsed.metadata?.lastModified || now
       }));
       const activeNodeId = resolveActiveNodeId(nodes, parsed.activeNodeId);
+      const detailPaneNodeIds = resolveDetailPaneNodeIds(nodes, activeNodeId, parsed.detailPaneNodeIds);
+      const activeDetailPane = resolveActiveDetailPane(detailPaneNodeIds, activeNodeId, parsed.activeDetailPane);
       const focusedNodeId = resolveFocusedNodeId(nodes, parsed.focusedNodeId);
 
       return {
@@ -256,10 +315,13 @@ const getInitialState = (): State => {
         nodes,
         nodeClipboard: null,
         activeNodeId,
+        detailPaneNodeIds,
+        activeDetailPane,
+        dualDetailLayout: normalizeDualDetailLayout(parsed.dualDetailLayout),
         focusedNodeId,
         currentProjectPath: parsed.currentProjectPath || null,
         versions: parsed.versions || [],
-        layoutMode: parsed.layoutMode || 'horizontal',
+        layoutMode: normalizeLayoutMode(parsed.layoutMode),
         ui: { 
             isMobile: window.innerWidth < MOBILE_THRESHOLD, 
             showStats: false,
@@ -293,6 +355,8 @@ const getInitialState = (): State => {
 // --- Actions ---
 type Action =
   | { type: 'SET_ACTIVE_NODE'; payload: string }
+  | { type: 'SET_ACTIVE_DETAIL_PANE'; payload: DetailPaneIndex }
+  | { type: 'SET_DUAL_DETAIL_LAYOUT'; payload: DualDetailLayout }
   | { type: 'SET_FOCUSED_NODE'; payload: string | null }
   | { type: 'COPY_NODE_SUBTREE'; payload: string }
   | { type: 'PASTE_NODE_SUBTREE'; payload: string }
@@ -333,8 +397,22 @@ const reducer = (state: State, action: Action): State => {
   const now = new Date().toISOString();
   
   switch (action.type) {
-    case 'SET_ACTIVE_NODE':
-      return { ...state, activeNodeId: action.payload };
+    case 'SET_ACTIVE_NODE': {
+      if (!state.nodes.some(node => node.id === action.payload)) return state;
+      return { ...state, ...assignNodeToDetailPane(state, action.payload) };
+    }
+
+    case 'SET_ACTIVE_DETAIL_PANE': {
+      const paneNodeId = state.detailPaneNodeIds[action.payload];
+      return {
+        ...state,
+        activeDetailPane: action.payload,
+        activeNodeId: paneNodeId || state.activeNodeId
+      };
+    }
+
+    case 'SET_DUAL_DETAIL_LAYOUT':
+      return { ...state, dualDetailLayout: action.payload };
 
     case 'SET_FOCUSED_NODE':
       return { ...state, focusedNodeId: action.payload };
@@ -362,12 +440,15 @@ const reducer = (state: State, action: Action): State => {
         targetIndex,
         now
       );
+      const detailPaneNodeIds: [string | null, string | null] = [...state.detailPaneNodeIds];
+      detailPaneNodeIds[state.activeDetailPane] = pasted.activeNodeId;
 
       return {
         ...state,
         nodes: pasted.nodes,
         contentMap: pasted.contentMap,
         activeNodeId: pasted.activeNodeId,
+        detailPaneNodeIds,
         metadata: { ...state.metadata, lastModified: now }
       };
     }
@@ -468,6 +549,8 @@ const reducer = (state: State, action: Action): State => {
       const newNodeContent = state.ui.useNodeTemplate
         ? buildNodeContent(defaultTitle, '', NEW_NODE_BODY_TEMPLATE)
         : buildNodeContent(defaultTitle);
+      const detailPaneNodeIds: [string | null, string | null] = [...state.detailPaneNodeIds];
+      detailPaneNodeIds[state.activeDetailPane] = newNode.id;
       
       return {
         ...state,
@@ -477,6 +560,7 @@ const reducer = (state: State, action: Action): State => {
           [newNode.id]: newNodeContent
         },
         activeNodeId: newNode.id,
+        detailPaneNodeIds,
         metadata: { ...state.metadata, lastModified: now }
       };
     }
@@ -515,6 +599,21 @@ const reducer = (state: State, action: Action): State => {
         newFocusedNodeId = null;
       }
 
+      let newDetailPaneNodeIds: [string | null, string | null] = state.detailPaneNodeIds.map(id =>
+        id && deletedIds.includes(id) ? null : id
+      ) as [string | null, string | null];
+      let newActiveDetailPane = state.activeDetailPane;
+      if (!newDetailPaneNodeIds[newActiveDetailPane]) {
+        const fallbackPane = newDetailPaneNodeIds.findIndex(Boolean);
+        if (fallbackPane === 0 || fallbackPane === 1) {
+          newActiveDetailPane = fallbackPane;
+          newActiveId = newDetailPaneNodeIds[fallbackPane];
+        } else {
+          newDetailPaneNodeIds = [newActiveId, null];
+          newActiveDetailPane = 0;
+        }
+      }
+
       const newContentMap = { ...state.contentMap };
       deletedIds.forEach((deletedId) => {
         delete newContentMap[deletedId];
@@ -526,6 +625,8 @@ const reducer = (state: State, action: Action): State => {
         contentMap: newContentMap,
         nodeClipboard: null,
         activeNodeId: newActiveId,
+        detailPaneNodeIds: newDetailPaneNodeIds,
+        activeDetailPane: newActiveDetailPane,
         focusedNodeId: newFocusedNodeId,
         metadata: { ...state.metadata, lastModified: now }
       };
@@ -698,6 +799,9 @@ const reducer = (state: State, action: Action): State => {
             currentProjectPath: null,
             nodeClipboard: null,
             activeNodeId: newNodes[0].id,
+            detailPaneNodeIds: [newNodes[0].id, null],
+            activeDetailPane: 0,
+            dualDetailLayout: 'side-by-side',
             focusedNodeId: null, // Exit focus mode
             versions: [],
             metadata: {
@@ -712,6 +816,8 @@ const reducer = (state: State, action: Action): State => {
     case 'IMPORT_DATA': {
       const data = action.payload.data;
       const importActiveNodeId = resolveActiveNodeId(data.nodes, data.activeNodeId);
+      const importDetailPaneNodeIds = resolveDetailPaneNodeIds(data.nodes, importActiveNodeId, data.detailPaneNodeIds);
+      const importActiveDetailPane = resolveActiveDetailPane(importDetailPaneNodeIds, importActiveNodeId, data.activeDetailPane);
       const importFocusedNodeId = resolveFocusedNodeId(data.nodes, data.focusedNodeId);
       return {
         ...state,
@@ -720,12 +826,15 @@ const reducer = (state: State, action: Action): State => {
         contentMap: data.contentMap,
         currentProjectPath: action.payload.projectPath ?? data.currentProjectPath ?? null,
         nodeClipboard: null,
-        layoutMode: data.layoutMode || 'horizontal',
+        layoutMode: normalizeLayoutMode(data.layoutMode),
         metadata: {
             ...data.metadata,
             lastExported: action.payload.markAsUnsaved ? data.metadata.lastExported : now
         },
         activeNodeId: importActiveNodeId,
+        detailPaneNodeIds: importDetailPaneNodeIds,
+        activeDetailPane: importActiveDetailPane,
+        dualDetailLayout: normalizeDualDetailLayout(data.dualDetailLayout),
         focusedNodeId: importFocusedNodeId,
         versions: [],
         ui: { 
@@ -874,6 +983,9 @@ const reducer = (state: State, action: Action): State => {
         if (!target) return state;
 
         const data = target.data;
+        const rollbackActiveNodeId = target.activeNodeId || data.activeNodeId || data.nodes[0]?.id || null;
+        const rollbackDetailPaneNodeIds = resolveDetailPaneNodeIds(data.nodes, rollbackActiveNodeId, data.detailPaneNodeIds);
+        const rollbackActiveDetailPane = resolveActiveDetailPane(rollbackDetailPaneNodeIds, rollbackActiveNodeId, data.activeDetailPane);
         return {
             ...state,
             projectName: data.projectName || DEFAULT_PROJECT_NAME,
@@ -881,9 +993,12 @@ const reducer = (state: State, action: Action): State => {
             contentMap: { ...data.contentMap, root: data.contentMap.root || '' },
             nodeClipboard: null,
             currentProjectPath: data.currentProjectPath || state.currentProjectPath,
-            layoutMode: data.layoutMode || 'horizontal',
+            layoutMode: normalizeLayoutMode(data.layoutMode),
             metadata: { ...data.metadata, lastModified: now },
-            activeNodeId: target.activeNodeId || data.nodes[0]?.id || null,
+            activeNodeId: rollbackActiveNodeId,
+            detailPaneNodeIds: rollbackDetailPaneNodeIds,
+            activeDetailPane: rollbackActiveDetailPane,
+            dualDetailLayout: normalizeDualDetailLayout(data.dualDetailLayout),
             focusedNodeId: target.focusedNodeId || null,
             ui: {
                 ...state.ui,
@@ -924,6 +1039,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       nodes: state.nodes,
       contentMap: state.contentMap,
       activeNodeId: state.activeNodeId,
+      detailPaneNodeIds: state.detailPaneNodeIds,
+      activeDetailPane: state.activeDetailPane,
+      dualDetailLayout: state.dualDetailLayout,
       metadata: state.metadata,
       layoutMode: state.layoutMode,
       versions: state.versions,
