@@ -1,13 +1,8 @@
 import { ProjectData } from '../types';
+import { loadProjectExportDirectoryHandle } from './fileHandleStore';
 
 interface SaveFileOptions {
   pickerId?: string;
-}
-
-interface OverwriteFileOptions {
-  description: string;
-  extensions: string[];
-  validateTargetName?: (filename: string) => boolean | Promise<boolean>;
 }
 
 export const generateId = (length: number = 10): string => {
@@ -90,7 +85,7 @@ export const saveFile = async (
   // Let supporting browsers reopen the last directory used for the same project export id.
   if ('showSaveFilePicker' in window) {
     try {
-      const pickerOptions: Record<string, unknown> = {
+      const basePickerOptions: Record<string, unknown> = {
         suggestedName: filename,
         types: [{
           description: contentType.includes('json') ? 'JSON File' : 'Markdown File',
@@ -99,10 +94,30 @@ export const saveFile = async (
       };
 
       if (options.pickerId) {
-        pickerOptions.id = options.pickerId;
+        basePickerOptions.id = options.pickerId;
       }
 
-      const handle = await (window as any).showSaveFilePicker(pickerOptions);
+      const exportDirectoryHandle = await loadProjectExportDirectoryHandle(options.pickerId);
+      let handle;
+
+      if (exportDirectoryHandle) {
+        try {
+          handle = await (window as any).showSaveFilePicker({
+            ...basePickerOptions,
+            startIn: exportDirectoryHandle,
+          });
+        } catch (err: any) {
+          if (err.name === 'AbortError') {
+            return false; // User cancelled
+          }
+          console.warn('Failed to open save picker from project export folder. Falling back:', err);
+        }
+      }
+
+      if (!handle) {
+        handle = await (window as any).showSaveFilePicker(basePickerOptions);
+      }
+
       const writable = await handle.createWritable();
       await writable.write(content);
       await writable.close();
@@ -131,44 +146,6 @@ export const saveFile = async (
 
 export const downloadJson = async (data: object, filename: string, options: SaveFileOptions = {}): Promise<boolean> => {
   return saveFile(JSON.stringify(data, null, 2), filename, 'application/json', options);
-};
-
-export const overwriteFile = async (
-  content: string,
-  contentType: string,
-  options: OverwriteFileOptions
-): Promise<boolean> => {
-  if (!('showOpenFilePicker' in window)) {
-    throw new Error('当前浏览器不支持安全覆盖，请使用 Export 导出或覆盖文件。');
-  }
-
-  try {
-    const [handle] = await (window as any).showOpenFilePicker({
-      multiple: false,
-      types: [{
-        description: options.description,
-        accept: { [contentType]: options.extensions },
-      }],
-    });
-
-    if (!handle) return false;
-
-    if (options.validateTargetName) {
-      const canSave = await options.validateTargetName(handle.name);
-      if (!canSave) return false;
-    }
-
-    const writable = await handle.createWritable();
-    await writable.write(content);
-    await writable.close();
-    return true;
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      return false;
-    }
-    console.error('File overwrite failed:', err);
-    throw err;
-  }
 };
 
 export const downloadJsonDirect = async (data: object, filename: string): Promise<boolean> => {

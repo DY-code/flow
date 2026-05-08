@@ -80,3 +80,69 @@ export const cloneSubtreeIntoProject = ({
     }
   };
 };
+
+export const importProjectAsNodeIntoProject = ({
+  sourceProject,
+  targetProject,
+  parentTitle,
+  nowIso = new Date().toISOString()
+}: {
+  sourceProject: ProjectData;
+  targetProject: ProjectData;
+  parentTitle: string;
+  nowIso?: string;
+}): ProjectData => {
+  const usedIds = new Set([...targetProject.nodes.map((node) => node.id), 'root']);
+  const parentId = generateUniqueNodeId(usedIds);
+  const sourceMinDepth = sourceProject.nodes.length
+    ? Math.min(...sourceProject.nodes.map((node) => node.depth))
+    : 0;
+  const importedContentMap: ContentMap = {
+    [parentId]: sourceProject.contentMap.root || ''
+  };
+
+  const parentNode: LogNode = {
+    id: parentId,
+    text: parentTitle || 'Imported Project',
+    desc: '',
+    status: 'waiting',
+    depth: 0,
+    collapsed: false,
+    order: 0,
+    lastModified: nowIso
+  };
+
+  const childNodes = sourceProject.nodes.map((node) => {
+    const clonedId = generateUniqueNodeId(usedIds);
+    const { id, depth, order, sourceNodeId: _sourceNodeId, ...rest } = node;
+    importedContentMap[clonedId] = sourceProject.contentMap[id] || '';
+
+    return {
+      ...rest,
+      id: clonedId,
+      depth: Math.max(1, depth - sourceMinDepth + 1),
+      order: 0
+    };
+  });
+
+  const nextNodes = [...targetProject.nodes, parentNode, ...childNodes]
+    .map((node, index) => ({ ...node, order: index }));
+
+  return {
+    ...targetProject,
+    nodes: nextNodes,
+    contentMap: {
+      ...targetProject.contentMap,
+      ...importedContentMap,
+      root: targetProject.contentMap.root || ''
+    },
+    activeNodeId: parentId,
+    detailPaneNodeIds: [parentId, null],
+    activeDetailPane: 0,
+    focusedNodeId: null,
+    metadata: {
+      ...targetProject.metadata,
+      lastModified: nowIso
+    }
+  };
+};

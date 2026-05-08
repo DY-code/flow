@@ -3,6 +3,8 @@ import { LogNode, ProjectData } from '../types';
 
 interface TaskPlanImportModalProps {
   isOpen: boolean;
+  sourceLabel: string;
+  sourcePath: string;
   taskPlanData: ProjectData | null;
   selectedNodeId: string | null;
   status: { type: 'idle' | 'loading' | 'error'; message: string };
@@ -35,6 +37,8 @@ const countDescendants = (nodes: LogNode[], nodeId: string): number => {
 
 const TaskPlanImportModal: React.FC<TaskPlanImportModalProps> = ({
   isOpen,
+  sourceLabel,
+  sourcePath,
   taskPlanData,
   selectedNodeId,
   status,
@@ -56,8 +60,8 @@ const TaskPlanImportModal: React.FC<TaskPlanImportModalProps> = ({
         <div className="border-b border-gray-200 px-5 py-4 dark:border-zinc-700">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">从任务计划导入</h3>
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">global/任务计划.json</p>
+              <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">从global导入</h3>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{sourcePath}</p>
             </div>
             <button
               type="button"
@@ -71,7 +75,7 @@ const TaskPlanImportModal: React.FC<TaskPlanImportModalProps> = ({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
           {status.type === 'loading' && (
-            <div className="px-2 py-8 text-sm text-gray-500 dark:text-gray-400">加载任务计划...</div>
+            <div className="px-2 py-8 text-sm text-gray-500 dark:text-gray-400">加载{sourceLabel}...</div>
           )}
 
           {status.type === 'error' && (
@@ -81,7 +85,7 @@ const TaskPlanImportModal: React.FC<TaskPlanImportModalProps> = ({
           )}
 
           {status.type !== 'loading' && status.type !== 'error' && nodes.length === 0 && (
-            <div className="px-2 py-8 text-sm text-gray-500 dark:text-gray-400">任务计划中还没有可导入的节点。</div>
+            <div className="px-2 py-8 text-sm text-gray-500 dark:text-gray-400">{sourceLabel}中还没有可导入的节点。</div>
           )}
 
           {status.type !== 'loading' && status.type !== 'error' && nodes.length > 0 && (

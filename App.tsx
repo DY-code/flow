@@ -19,14 +19,35 @@ import {
     downloadMarkdown,
     formatCompactDateTime,
     formatDateForFilename,
-    overwriteFile,
     sanitizeFilename,
     readTextFile
 } from './utils/helpers';
-import { cloneSubtreeIntoProject, countNodeDescendants } from './utils/projectImport';
+import {
+    type ExportFolderFileEntry,
+    hasProjectExportDirectoryHandle,
+    listProjectExportDirectoryFiles,
+    writeFileHandle,
+    selectProjectExportDirectory
+} from './utils/fileHandleStore';
+import { cloneSubtreeIntoProject, countNodeDescendants, importProjectAsNodeIntoProject } from './utils/projectImport';
 import { ProjectData, LogNode, BackgroundPreset } from './types';
 
 const TASK_PLAN_PROJECT_PATH = 'global/任务计划.json';
+const TODAY_TODO_PROJECT_PATH = 'global/今日待办.json';
+
+const GLOBAL_INTERACTION_TARGETS = [
+  { id: 'taskPlan', label: '任务计划', projectName: '任务计划', projectPath: TASK_PLAN_PROJECT_PATH },
+  { id: 'todayTodo', label: '今日待办', projectName: '今日待办', projectPath: TODAY_TODO_PROJECT_PATH }
+] as const;
+
+type GlobalInteractionTargetId = typeof GLOBAL_INTERACTION_TARGETS[number]['id'];
+type GlobalInteractionTarget = typeof GLOBAL_INTERACTION_TARGETS[number];
+
+const DEFAULT_GLOBAL_INTERACTION_TARGET_ID: GlobalInteractionTargetId = 'taskPlan';
+
+const getGlobalInteractionTarget = (targetId: GlobalInteractionTargetId): GlobalInteractionTarget => (
+  GLOBAL_INTERACTION_TARGETS.find((target) => target.id === targetId) || GLOBAL_INTERACTION_TARGETS[0]
+);
 
 interface RecentProjectEntry {
   name: string;
@@ -55,6 +76,12 @@ interface OverwriteRiskConfirmData {
   actualPrefix: string;
 }
 
+interface OverwriteFilePickerData {
+  title: string;
+  description: string;
+  files: ExportFolderFileEntry[];
+}
+
 const buildImportConfirmationMessage = ({
   sourceNode,
   descendantCount,
@@ -70,7 +97,7 @@ const buildImportConfirmationMessage = ({
   targetProjectName: string;
   targetProjectPath: string;
 }) => [
-  '确定执行计划节点导入吗？',
+  '确定执行节点导入吗？',
   '',
   `源节点：${sourceNode.text || 'Untitled'}`,
   `子节点数量：${descendantCount}`,
@@ -81,6 +108,31 @@ const buildImportConfirmationMessage = ({
   '导入位置：目标项目根级节点末尾',
   '',
   '说明：将复制该节点及全部子节点，并为复制出的节点生成新 ID；不会删除、合并或覆盖目标项目已有节点。'
+].join('\n');
+
+const buildProjectAsNodeImportConfirmationMessage = ({
+  sourceProjectName,
+  sourceFilename,
+  sourceNodeCount,
+  targetProjectName,
+  targetProjectPath
+}: {
+  sourceProjectName: string;
+  sourceFilename: string;
+  sourceNodeCount: number;
+  targetProjectName?: string | null;
+  targetProjectPath?: string | null;
+}) => [
+  '确定将项目导入为节点吗？',
+  '',
+  `源项目：${sourceProjectName}`,
+  `源文件：${sourceFilename}`,
+  `源节点数量：${sourceNodeCount}`,
+  `目标项目：${targetProjectName || 'Untitled Project'}`,
+  `目标路径：${getProjectPathLabel(targetProjectPath)}`,
+  '导入位置：当前项目根级节点末尾',
+  '',
+  '说明：将创建一个新父节点，并把源项目全部节点作为其子节点导入；不会覆盖当前项目。'
 ].join('\n');
 
 const getProjectPathLabel = (projectPath?: string | null): string => projectPath || '当前未保存项目';
@@ -109,6 +161,15 @@ const getExportTargetProjectPrefix = (filename: string, extension: 'json' | 'md'
 
 const getSafeProjectFilenameBase = (projectName?: string | null): string => {
   return sanitizeFilename(projectName || 'flow') || 'flow';
+};
+
+const getFilenameWithoutJsonExtension = (filename: string): string => {
+  return filename.toLowerCase().endsWith('.json') ? filename.slice(0, -5) : filename.replace(/\.[^/.]+$/, '');
+};
+
+const isProjectData = (value: unknown): value is ProjectData => {
+  const data = value as ProjectData;
+  return !!data && Array.isArray(data.nodes) && !!data.contentMap && typeof data.contentMap === 'object';
 };
 
 const BACKGROUND_PRESETS: Array<{ id: BackgroundPreset; label: string; description: string; swatch: string; light: string; dark: string }> = [
@@ -313,6 +374,7 @@ const DualDetailArea: React.FC = () => {
 const ResearchLogApp: React.FC = () => {
   const { state, dispatch } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importProjectAsNodeInputRef = useRef<HTMLInputElement>(null);
   const REPO_URL_STORAGE_KEY = 'flow-github-repo-url';
   const PROXY_ENABLED_STORAGE_KEY = 'flow-github-proxy-enabled';
   const HTTP_PROXY_STORAGE_KEY = 'flow-github-http-proxy';
@@ -328,12 +390,19 @@ const ResearchLogApp: React.FC = () => {
   const isGlobalProject = !!currentProjectPath && currentProjectPath.startsWith('global/');
   const isNonGlobalProject = !isGlobalProject;
   const isTaskPlanProject = currentProjectPath === TASK_PLAN_PROJECT_PATH;
-  const isTodayTodoProject = currentProjectPath === 'global/今日待办.json';
+  const isTodayTodoProject = currentProjectPath === TODAY_TODO_PROJECT_PATH;
   const projectLastModifiedLabel = formatCompactDateTime(state.metadata.lastModified);
 
   // Export Menu State
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
+  const [hasProjectExportFolder, setHasProjectExportFolder] = useState(false);
+  const [isExportFolderNoticeOpen, setIsExportFolderNoticeOpen] = useState(false);
+  const importMenuRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const exportFolderNoticeResolveRef = useRef<((shouldContinue: boolean) => void) | null>(null);
+  const [overwriteFilePicker, setOverwriteFilePicker] = useState<OverwriteFilePickerData | null>(null);
+  const overwriteFilePickerResolveRef = useRef<((file: ExportFolderFileEntry | null) => void) | null>(null);
   const [overwriteRiskConfirm, setOverwriteRiskConfirm] = useState<OverwriteRiskConfirmData | null>(null);
   const overwriteRiskConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
   const [isBackgroundMenuOpen, setIsBackgroundMenuOpen] = useState(false);
@@ -352,6 +421,9 @@ const ResearchLogApp: React.FC = () => {
   const [isGeneratingTodayTodos, setIsGeneratingTodayTodos] = useState(false);
   const [isSyncingTodayTodos, setIsSyncingTodayTodos] = useState(false);
   const [isImportingPlanNode, setIsImportingPlanNode] = useState(false);
+  const [isGlobalInteractionMenuOpen, setIsGlobalInteractionMenuOpen] = useState(false);
+  const [selectedGlobalInteractionTargetId, setSelectedGlobalInteractionTargetId] = useState<GlobalInteractionTargetId>(DEFAULT_GLOBAL_INTERACTION_TARGET_ID);
+  const [activeGlobalImportTargetId, setActiveGlobalImportTargetId] = useState<GlobalInteractionTargetId>(DEFAULT_GLOBAL_INTERACTION_TARGET_ID);
   const [isTaskPlanImportModalOpen, setIsTaskPlanImportModalOpen] = useState(false);
   const [taskPlanImportData, setTaskPlanImportData] = useState<ProjectData | null>(null);
   const [selectedTaskPlanNodeId, setSelectedTaskPlanNodeId] = useState<string | null>(null);
@@ -372,6 +444,7 @@ const ResearchLogApp: React.FC = () => {
   // New Project Menu State
   const [isNewProjectMenuOpen, setIsNewProjectMenuOpen] = useState(false);
   const newProjectMenuRef = useRef<HTMLDivElement>(null);
+  const globalInteractionMenuRef = useRef<HTMLDivElement>(null);
   const [isEditingProjectName, setIsEditingProjectName] = useState(false);
   const projectNameInputRef = useRef<HTMLInputElement>(null);
 
@@ -435,6 +508,9 @@ const ResearchLogApp: React.FC = () => {
   // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+        if (importMenuRef.current && !importMenuRef.current.contains(event.target as Node)) {
+            setIsImportMenuOpen(false);
+        }
         if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
             setIsExportMenuOpen(false);
         }
@@ -447,12 +523,15 @@ const ResearchLogApp: React.FC = () => {
         if (newProjectMenuRef.current && !newProjectMenuRef.current.contains(event.target as Node)) {
             setIsNewProjectMenuOpen(false);
         }
+        if (globalInteractionMenuRef.current && !globalInteractionMenuRef.current.contains(event.target as Node)) {
+            setIsGlobalInteractionMenuOpen(false);
+        }
     };
-    if (isExportMenuOpen || isRecentProjectsMenuOpen || isBackgroundMenuOpen || isNewProjectMenuOpen) {
+    if (isImportMenuOpen || isExportMenuOpen || isRecentProjectsMenuOpen || isBackgroundMenuOpen || isNewProjectMenuOpen || isGlobalInteractionMenuOpen) {
         document.addEventListener('mousedown', handleClickOutside);
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isExportMenuOpen, isRecentProjectsMenuOpen, isBackgroundMenuOpen, isNewProjectMenuOpen]);
+  }, [isImportMenuOpen, isExportMenuOpen, isRecentProjectsMenuOpen, isBackgroundMenuOpen, isNewProjectMenuOpen, isGlobalInteractionMenuOpen]);
 
   useEffect(() => {
     if (isEditingProjectName) {
@@ -660,8 +739,8 @@ const ResearchLogApp: React.FC = () => {
 
     try {
       const text = await readTextFile(file);
-      const json = JSON.parse(text) as ProjectData;
-      if (json.nodes && json.contentMap) {
+      const json = JSON.parse(text);
+      if (isProjectData(json)) {
         if(window.confirm('Overwrite current project?')) {
           dispatch({ type: 'IMPORT_DATA', payload: { data: json, projectPath: null } });
         }
@@ -670,6 +749,50 @@ const ResearchLogApp: React.FC = () => {
       }
     } catch (err: any) {
       alert(err?.message || 'Failed to parse JSON.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleImportProjectAsNode = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await readTextFile(file);
+      const sourceProject = JSON.parse(text);
+
+      if (!isProjectData(sourceProject)) {
+        alert('Invalid file format.');
+        return;
+      }
+
+      const parentTitle = (sourceProject.projectName || '').trim()
+        || getFilenameWithoutJsonExtension(file.name).trim()
+        || 'Imported Project';
+      const confirmed = window.confirm(buildProjectAsNodeImportConfirmationMessage({
+        sourceProjectName: parentTitle,
+        sourceFilename: file.name,
+        sourceNodeCount: sourceProject.nodes.length,
+        targetProjectName: state.projectName,
+        targetProjectPath: currentProjectPath
+      }));
+
+      if (!confirmed) return;
+
+      const nextProjectData = importProjectAsNodeIntoProject({
+        sourceProject,
+        targetProject: buildProjectData(),
+        parentTitle
+      });
+
+      dispatch({
+        type: 'IMPORT_DATA',
+        payload: { data: nextProjectData, projectPath: currentProjectPath, markAsUnsaved: true }
+      });
+      alert(`已导入项目为节点：${parentTitle}。请按需手动保存当前项目。`);
+    } catch (err: any) {
+      alert(err?.message || '导入项目为节点失败。');
     } finally {
       e.target.value = '';
     }
@@ -732,21 +855,136 @@ const ResearchLogApp: React.FC = () => {
       ui: state.ui
   });
 
-  const loadTaskPlanProject = async (): Promise<ProjectFileResponse> => {
-    const response = await fetch(`/api/projects/open?path=${encodeURIComponent(TASK_PLAN_PROJECT_PATH)}`);
+  const getCurrentProjectExportPickerId = () => buildProjectExportPickerId({
+    currentProjectPath: state.currentProjectPath,
+    metadata: state.metadata,
+    projectName: state.projectName
+  });
+
+  const refreshProjectExportFolderStatus = useCallback(async () => {
+    const pickerId = buildProjectExportPickerId({
+      currentProjectPath: state.currentProjectPath,
+      metadata: state.metadata,
+      projectName: state.projectName
+    });
+    const hasFolder = await hasProjectExportDirectoryHandle(pickerId);
+    setHasProjectExportFolder(hasFolder);
+  }, [state.currentProjectPath, state.metadata.createdAt, state.projectName]);
+
+  useEffect(() => {
+    void refreshProjectExportFolderStatus();
+  }, [refreshProjectExportFolderStatus]);
+
+  useEffect(() => {
+    if (isExportMenuOpen) {
+      void refreshProjectExportFolderStatus();
+    }
+  }, [isExportMenuOpen, refreshProjectExportFolderStatus]);
+
+  const requestContinueWithoutExportFolder = (): Promise<boolean> => new Promise((resolve) => {
+    exportFolderNoticeResolveRef.current = resolve;
+    setIsExportFolderNoticeOpen(true);
+  });
+
+  const resolveExportFolderNotice = (shouldContinue: boolean) => {
+    exportFolderNoticeResolveRef.current?.(shouldContinue);
+    exportFolderNoticeResolveRef.current = null;
+    setIsExportFolderNoticeOpen(false);
+  };
+
+  const ensureProjectExportFolderPrompt = async (pickerId: string): Promise<boolean> => {
+    if (!('showDirectoryPicker' in window)) {
+      return true;
+    }
+
+    const hasFolder = await hasProjectExportDirectoryHandle(pickerId);
+    setHasProjectExportFolder(hasFolder);
+    if (hasFolder) return true;
+
+    return requestContinueWithoutExportFolder();
+  };
+
+  const requestOverwriteTargetFile = (data: OverwriteFilePickerData): Promise<ExportFolderFileEntry | null> => new Promise((resolve) => {
+    overwriteFilePickerResolveRef.current = resolve;
+    setOverwriteFilePicker(data);
+  });
+
+  const resolveOverwriteFilePicker = (file: ExportFolderFileEntry | null) => {
+    overwriteFilePickerResolveRef.current?.(file);
+    overwriteFilePickerResolveRef.current = null;
+    setOverwriteFilePicker(null);
+  };
+
+  const selectOverwriteTargetFromExportFolder = async (
+    pickerId: string,
+    extension: 'json' | 'md',
+    label: string
+  ): Promise<ExportFolderFileEntry | null> => {
+    let files: ExportFolderFileEntry[] | null;
+
+    try {
+      files = await listProjectExportDirectoryFiles(pickerId, `.${extension}`);
+    } catch (error: any) {
+      alert(error?.message || '读取导出目录失败。请在 Export 菜单中重新设置 Set Export Folder。');
+      return null;
+    }
+
+    if (!files) {
+      setHasProjectExportFolder(false);
+      alert('请先在 Export 菜单中点击 Set Export Folder 设置导出目录。');
+      return null;
+    }
+
+    setHasProjectExportFolder(true);
+
+    if (files.length === 0) {
+      alert(`当前 Export Folder 中没有可覆盖的 ${label} 文件。`);
+      return null;
+    }
+
+    return requestOverwriteTargetFile({
+      title: `选择覆盖的 ${label} 文件`,
+      description: `从当前项目 Export Folder 中选择要覆盖的 ${label} 文件。`,
+      files
+    });
+  };
+
+  const handleSetProjectExportFolder = async () => {
+    const pickerId = getCurrentProjectExportPickerId();
+
+    if (!('showDirectoryPicker' in window)) {
+      alert('当前浏览器不支持项目导出目录记忆，将继续使用默认文件选择逻辑。');
+      setIsExportMenuOpen(false);
+      return;
+    }
+
+    try {
+      const selected = await selectProjectExportDirectory(pickerId);
+      if (selected) {
+        setHasProjectExportFolder(true);
+      }
+    } catch (error: any) {
+      alert(error?.message || '设置导出目录失败。');
+    } finally {
+      setIsExportMenuOpen(false);
+    }
+  };
+
+  const loadGlobalInteractionProject = async (target: GlobalInteractionTarget): Promise<ProjectFileResponse> => {
+    const response = await fetch(`/api/projects/open?path=${encodeURIComponent(target.projectPath)}`);
     const result = await response.json() as ProjectFileResponse & { error?: string };
     if (!response.ok) {
-      throw new Error(result?.error || '读取任务计划失败');
+      throw new Error(result?.error || `读取${target.label}失败`);
     }
     return result;
   };
 
-  const confirmBeforeOpeningTaskPlan = () => {
+  const confirmBeforeOpeningGlobalProject = (target: GlobalInteractionTarget) => {
     if (!hasUnsavedChanges && currentProjectPath) return true;
 
     const lines = [
       '当前项目不会自动保存。',
-      '导入到任务计划后将自动打开任务计划，当前项目的修改需要你之后手动保存、导出或推送。'
+      `导入到global（${target.label}）后将自动打开${target.label}，当前项目的修改需要你之后手动保存、导出或推送。`
     ];
 
     if (!currentProjectPath) {
@@ -757,8 +995,9 @@ const ResearchLogApp: React.FC = () => {
     return window.confirm(lines.join('\n'));
   };
 
-  const handleImportActiveNodeToTaskPlan = async () => {
+  const handleImportActiveNodeToGlobal = async () => {
     if (!isNonGlobalProject) return;
+    const target = getGlobalInteractionTarget(selectedGlobalInteractionTargetId);
     const sourceNode = state.nodes.find((node) => node.id === state.activeNodeId);
     if (!sourceNode) {
       alert('请先在左侧大纲中点击选择一个要导入的节点。');
@@ -770,65 +1009,70 @@ const ResearchLogApp: React.FC = () => {
       descendantCount: countNodeDescendants(state.nodes, sourceNode.id),
       sourceProjectName: state.projectName,
       sourceProjectPath: getProjectPathLabel(currentProjectPath),
-      targetProjectName: '任务计划',
-      targetProjectPath: TASK_PLAN_PROJECT_PATH
+      targetProjectName: target.projectName,
+      targetProjectPath: target.projectPath
     }));
     if (!confirmed) return;
-    if (!confirmBeforeOpeningTaskPlan()) return;
+    if (!confirmBeforeOpeningGlobalProject(target)) return;
 
     setIsImportingPlanNode(true);
     try {
-      const taskPlanProject = await loadTaskPlanProject();
-      const nextTaskPlanData = cloneSubtreeIntoProject({
+      const globalProject = await loadGlobalInteractionProject(target);
+      const nextGlobalData = cloneSubtreeIntoProject({
         sourceProject: buildProjectData(),
-        targetProject: taskPlanProject.projectData,
+        targetProject: globalProject.projectData,
         sourceNodeId: sourceNode.id
       });
       dispatch({
         type: 'IMPORT_DATA',
-        payload: { data: nextTaskPlanData, projectPath: taskPlanProject.projectPath, markAsUnsaved: true }
+        payload: { data: nextGlobalData, projectPath: globalProject.projectPath, markAsUnsaved: true }
       });
+      setIsGlobalInteractionMenuOpen(false);
       await loadRecentProjects();
-      alert(`已导入到任务计划：${sourceNode.text || 'Untitled'}。请按需手动保存任务计划。`);
+      alert(`已导入到global（${target.label}）：${sourceNode.text || 'Untitled'}。请按需手动保存${target.label}。`);
     } catch (error: any) {
-      alert(error?.message || '导入到任务计划失败。');
+      alert(error?.message || '导入到global失败。');
     } finally {
       setIsImportingPlanNode(false);
     }
   };
 
-  const handleOpenTaskPlanImportModal = async () => {
+  const handleOpenGlobalImportModal = async () => {
     if (!isNonGlobalProject) return;
+    const target = getGlobalInteractionTarget(selectedGlobalInteractionTargetId);
+    setActiveGlobalImportTargetId(target.id);
+    setIsGlobalInteractionMenuOpen(false);
     setIsTaskPlanImportModalOpen(true);
     setTaskPlanImportStatus({ type: 'loading', message: '' });
     setTaskPlanImportData(null);
     setSelectedTaskPlanNodeId(null);
 
     try {
-      const result = await loadTaskPlanProject();
+      const result = await loadGlobalInteractionProject(target);
       setTaskPlanImportData(result.projectData);
       setTaskPlanImportStatus({ type: 'idle', message: '' });
     } catch (error: any) {
       setTaskPlanImportStatus({
         type: 'error',
-        message: error?.message || '任务计划文件不存在或无法读取，请先创建任务计划。'
+        message: error?.message || `${target.label}文件不存在或无法读取。`
       });
     }
   };
 
   const handleImportSelectedTaskPlanNode = async () => {
     if (!isNonGlobalProject || !taskPlanImportData || !selectedTaskPlanNodeId) return;
+    const target = getGlobalInteractionTarget(activeGlobalImportTargetId);
     const sourceNode = taskPlanImportData.nodes.find((node) => node.id === selectedTaskPlanNodeId);
     if (!sourceNode) {
-      alert('请先选择一个任务计划节点。');
+      alert(`请先选择一个${target.label}节点。`);
       return;
     }
 
     const confirmed = window.confirm(buildImportConfirmationMessage({
       sourceNode,
       descendantCount: countNodeDescendants(taskPlanImportData.nodes, sourceNode.id),
-      sourceProjectName: taskPlanImportData.projectName || '任务计划',
-      sourceProjectPath: TASK_PLAN_PROJECT_PATH,
+      sourceProjectName: taskPlanImportData.projectName || target.projectName,
+      sourceProjectPath: target.projectPath,
       targetProjectName: state.projectName,
       targetProjectPath: getProjectPathLabel(currentProjectPath)
     }));
@@ -849,9 +1093,9 @@ const ResearchLogApp: React.FC = () => {
       setTaskPlanImportData(null);
       setSelectedTaskPlanNodeId(null);
       await loadRecentProjects();
-      alert(`已从任务计划导入当前项目：${sourceNode.text || 'Untitled'}。请按需手动保存当前项目。`);
+      alert(`已从global（${target.label}）导入当前项目：${sourceNode.text || 'Untitled'}。请按需手动保存当前项目。`);
     } catch (error: any) {
-      alert(error?.message || '从任务计划导入失败。');
+      alert(error?.message || '从global导入失败。');
     } finally {
       setIsImportingPlanNode(false);
     }
@@ -893,6 +1137,11 @@ const ResearchLogApp: React.FC = () => {
       return;
     }
     const pickerId = buildProjectExportPickerId(data);
+    const canContinue = await ensureProjectExportFolderPrompt(pickerId);
+    if (!canContinue) {
+      setIsExportMenuOpen(false);
+      return;
+    }
     const saved = await downloadJson(data, `${getSafeFilename()}.json`, { pickerId });
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
@@ -910,6 +1159,11 @@ const ResearchLogApp: React.FC = () => {
       return;
     }
     const pickerId = buildProjectExportPickerId(data);
+    const canContinue = await ensureProjectExportFolderPrompt(pickerId);
+    if (!canContinue) {
+      setIsExportMenuOpen(false);
+      return;
+    }
     const saved = await downloadMarkdown(data, `${getSafeFilename()}.md`, { pickerId });
     if (saved) {
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
@@ -919,16 +1173,18 @@ const ResearchLogApp: React.FC = () => {
 
   const handleOverwriteJson = async () => {
     const data: ProjectData = buildProjectData();
+    const pickerId = buildProjectExportPickerId(data);
 
     try {
-      const saved = await overwriteFile(JSON.stringify(data, null, 2), 'application/json', {
-        description: 'JSON File',
-        extensions: ['.json'],
-        validateTargetName: (targetFilename) => confirmExportTargetName(targetFilename, 'json')
-      });
-      if (saved) {
-        dispatch({ type: 'UPDATE_LAST_EXPORTED' });
-      }
+      setIsExportMenuOpen(false);
+      const targetFile = await selectOverwriteTargetFromExportFolder(pickerId, 'json', 'JSON');
+      if (!targetFile) return;
+
+      const canSave = await confirmExportTargetName(targetFile.name, 'json');
+      if (!canSave) return;
+
+      await writeFileHandle(targetFile.handle, JSON.stringify(data, null, 2));
+      dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     } catch (error: any) {
       alert(error?.message || '覆盖 JSON 文件失败。');
     } finally {
@@ -938,16 +1194,18 @@ const ResearchLogApp: React.FC = () => {
 
   const handleOverwriteMarkdown = async () => {
     const data: ProjectData = buildProjectData();
+    const pickerId = buildProjectExportPickerId(data);
 
     try {
-      const saved = await overwriteFile(buildMarkdownExport(data), 'text/markdown', {
-        description: 'Markdown File',
-        extensions: ['.md'],
-        validateTargetName: (targetFilename) => confirmExportTargetName(targetFilename, 'md')
-      });
-      if (saved) {
-        dispatch({ type: 'UPDATE_LAST_EXPORTED' });
-      }
+      setIsExportMenuOpen(false);
+      const targetFile = await selectOverwriteTargetFromExportFolder(pickerId, 'md', 'Markdown');
+      if (!targetFile) return;
+
+      const canSave = await confirmExportTargetName(targetFile.name, 'md');
+      if (!canSave) return;
+
+      await writeFileHandle(targetFile.handle, buildMarkdownExport(data));
+      dispatch({ type: 'UPDATE_LAST_EXPORTED' });
     } catch (error: any) {
       alert(error?.message || '覆盖 Markdown 文件失败。');
     } finally {
@@ -1233,7 +1491,7 @@ const ResearchLogApp: React.FC = () => {
 
                 {/* View Mode Switcher */}
                 {isMobile ? (
-                    <button 
+                    <button
                         onClick={() => dispatch({ type: 'SET_VIEW_MODE', payload: viewMode === 'editor' ? 'split' : 'editor' })} 
                         className={`p-2 rounded-lg transition-colors ${viewMode !== 'editor' ? 'bg-[color:var(--flow-accent-soft)] text-[color:var(--flow-accent)] dark:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent)]' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-zinc-800'}`}
                         title={viewMode === 'editor' ? "Show Outline" : "Show Editor"}
@@ -1283,23 +1541,60 @@ const ResearchLogApp: React.FC = () => {
                             title={hasUnsavedChanges ? "Unexported changes" : hasCurrentVersionBackup ? "Current version backed up in Version History" : "All changes exported"}
                         />
                         {isNonGlobalProject && (
-                            <div className="ml-1 flex items-center gap-1">
+                            <div className="relative ml-1" ref={globalInteractionMenuRef}>
                                 <button
-                                    onClick={() => void handleImportActiveNodeToTaskPlan()}
+                                    type="button"
+                                    onClick={() => setIsGlobalInteractionMenuOpen((open) => !open)}
                                     disabled={isImportingPlanNode}
-                                    className="rounded-md border border-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70 dark:border-zinc-700 dark:text-gray-200 dark:hover:bg-zinc-800"
-                                    title="将当前高亮选中节点及其子节点导入任务计划"
+                                    className={`flex items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-[10px] font-medium transition-colors disabled:cursor-wait disabled:opacity-70 dark:border-zinc-700 ${
+                                        isGlobalInteractionMenuOpen
+                                            ? 'bg-[color:var(--flow-accent-soft)] text-[color:var(--flow-accent)] dark:bg-zinc-800'
+                                            : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-zinc-800'
+                                    }`}
+                                    title="与 global 文件进行节点导入"
                                 >
-                                    {isImportingPlanNode ? '导入中...' : '导入到任务计划'}
+                                    <span>{isImportingPlanNode ? '处理中...' : 'global交互'}</span>
+                                    <IconChevronDown className={`h-3 w-3 transition-transform ${isGlobalInteractionMenuOpen ? 'rotate-180' : ''}`} />
                                 </button>
-                                <button
-                                    onClick={() => void handleOpenTaskPlanImportModal()}
-                                    disabled={isImportingPlanNode}
-                                    className="rounded-md border border-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70 dark:border-zinc-700 dark:text-gray-200 dark:hover:bg-zinc-800"
-                                    title="从任务计划选择节点导入当前项目"
-                                >
-                                    从任务计划导入
-                                </button>
+
+                                {isGlobalInteractionMenuOpen && (
+                                    <div className="absolute left-0 z-50 mt-2 w-56 rounded-lg border border-[color:var(--flow-accent-border)]/70 bg-white shadow-xl dark:border-[color:var(--flow-accent-border)] dark:bg-zinc-900">
+                                        <div className="border-b border-gray-100 px-3 py-3 dark:border-zinc-800">
+                                            <label htmlFor="global-interaction-target" className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">
+                                                global文件
+                                            </label>
+                                            <select
+                                                id="global-interaction-target"
+                                                value={selectedGlobalInteractionTargetId}
+                                                onChange={(event) => setSelectedGlobalInteractionTargetId(event.target.value as GlobalInteractionTargetId)}
+                                                disabled={isImportingPlanNode}
+                                                className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm text-gray-800 outline-none transition-colors focus:border-[color:var(--flow-accent-border)] dark:border-zinc-700 dark:bg-zinc-950 dark:text-gray-100"
+                                            >
+                                                {GLOBAL_INTERACTION_TARGETS.map((target) => (
+                                                    <option key={target.id} value={target.id}>{target.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="space-y-1 p-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => void handleImportActiveNodeToGlobal()}
+                                                disabled={isImportingPlanNode}
+                                                className="block w-full rounded-md px-3 py-2 text-left text-sm text-[color:var(--flow-accent-muted)] transition-colors hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] disabled:cursor-wait disabled:opacity-60 dark:text-gray-200 dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)]"
+                                            >
+                                                导入到global
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => void handleOpenGlobalImportModal()}
+                                                disabled={isImportingPlanNode}
+                                                className="block w-full rounded-md px-3 py-2 text-left text-sm text-[color:var(--flow-accent-muted)] transition-colors hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] disabled:cursor-wait disabled:opacity-60 dark:text-gray-200 dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)]"
+                                            >
+                                                从global导入
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                         {!isGlobalProject && projectLastModifiedLabel && (
@@ -1514,14 +1809,40 @@ const ResearchLogApp: React.FC = () => {
                     )}
                 </div>
 
-                <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-2 text-[color:var(--flow-accent-muted)] hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:text-[color:var(--flow-accent-muted)] dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)] rounded-lg transition-colors"
-                    title="Import JSON"
-                >
-                    <IconUpload className="w-4 h-4" />
-                </button>
+                <div className="relative" ref={importMenuRef}>
+                    <button
+                        onClick={() => setIsImportMenuOpen(!isImportMenuOpen)}
+                        className={`flex items-center gap-1 p-2 rounded-lg transition-colors ${isImportMenuOpen ? 'bg-[color:var(--flow-accent-soft)] text-[color:var(--flow-accent)] dark:bg-zinc-800 dark:text-[color:var(--flow-accent)]' : 'text-[color:var(--flow-accent-muted)] hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:text-[color:var(--flow-accent-muted)] dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)]'}`}
+                        title="Import"
+                    >
+                        <IconUpload className="w-4 h-4" />
+                        <IconChevronDown className="w-3 h-3" />
+                    </button>
+                    {isImportMenuOpen && (
+                        <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-[color:var(--flow-accent-border)]/70 dark:border-[color:var(--flow-accent-border)] z-50">
+                            <button
+                                onClick={() => {
+                                    setIsImportMenuOpen(false);
+                                    fileInputRef.current?.click();
+                                }}
+                                className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]"
+                            >
+                                Import JSON (Overwrite Project)
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setIsImportMenuOpen(false);
+                                    importProjectAsNodeInputRef.current?.click();
+                                }}
+                                className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]"
+                            >
+                                Import Project as Node
+                            </button>
+                        </div>
+                    )}
+                </div>
                 <input type="file" ref={fileInputRef} onChange={handleImport} accept=".json" className="hidden" />
+                <input type="file" ref={importProjectAsNodeInputRef} onChange={handleImportProjectAsNode} accept=".json" className="hidden" />
 
                 {/* Export Menu */}
                 <div className="relative" ref={exportMenuRef}>
@@ -1540,6 +1861,8 @@ const ResearchLogApp: React.FC = () => {
                             <div className="my-1 border-t border-gray-100 dark:border-zinc-700" />
                             <button onClick={handleOverwriteJson} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">Overwrite JSON File</button>
                             <button onClick={handleOverwriteMarkdown} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">Overwrite Markdown File</button>
+                            <div className="my-1 border-t border-gray-100 dark:border-zinc-700" />
+                            <button onClick={handleSetProjectExportFolder} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">{hasProjectExportFolder ? 'Reset Export Folder' : 'Set Export Folder'}</button>
                             <div className="my-1 border-t border-gray-100 dark:border-zinc-700" />
                             <button onClick={handleOpenGitPushModal} className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]">推送到 GitHub</button>
                         </div>
@@ -1598,6 +1921,8 @@ const ResearchLogApp: React.FC = () => {
         <VersionsModal onSaveCurrentVersion={handleSaveCurrentVersion} />
         <TaskPlanImportModal
             isOpen={isTaskPlanImportModalOpen}
+            sourceLabel={getGlobalInteractionTarget(activeGlobalImportTargetId).label}
+            sourcePath={getGlobalInteractionTarget(activeGlobalImportTargetId).projectPath}
             taskPlanData={taskPlanImportData}
             selectedNodeId={selectedTaskPlanNodeId}
             status={taskPlanImportStatus}
@@ -1609,6 +1934,86 @@ const ResearchLogApp: React.FC = () => {
                 setIsTaskPlanImportModalOpen(false);
             }}
         />
+        {overwriteFilePicker && (
+            <div
+                className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4"
+                onClick={() => resolveOverwriteFilePicker(null)}
+            >
+                <div
+                    className="w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+                    onClick={(e) => e.stopPropagation()}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="overwrite-file-picker-title"
+                >
+                    <div className="border-b border-gray-200 px-5 py-4 dark:border-zinc-700">
+                        <h3 id="overwrite-file-picker-title" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                            {overwriteFilePicker.title}
+                        </h3>
+                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                            {overwriteFilePicker.description}
+                        </p>
+                    </div>
+                    <div className="max-h-80 overflow-y-auto px-2 py-2">
+                        {overwriteFilePicker.files.map((file) => (
+                            <button
+                                key={file.name}
+                                onClick={() => resolveOverwriteFilePicker(file)}
+                                className="block w-full rounded-lg px-3 py-2 text-left text-sm text-gray-800 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:text-gray-100 dark:hover:bg-zinc-800"
+                            >
+                                <span className="block break-all font-medium">{file.name}</span>
+                            </button>
+                        ))}
+                    </div>
+                    <div className="flex items-center justify-end border-t border-gray-200 px-5 py-4 dark:border-zinc-700">
+                        <button
+                            onClick={() => resolveOverwriteFilePicker(null)}
+                            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-zinc-600 dark:text-gray-200 dark:hover:bg-zinc-800"
+                        >
+                            取消
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+        {isExportFolderNoticeOpen && (
+            <div
+                className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4"
+                onClick={() => resolveExportFolderNotice(false)}
+            >
+                <div
+                    className="w-full max-w-lg rounded-xl border border-amber-200 bg-white shadow-2xl dark:border-amber-900/60 dark:bg-zinc-900"
+                    onClick={(e) => e.stopPropagation()}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="export-folder-notice-title"
+                >
+                    <div className="border-b border-amber-100 px-5 py-4 dark:border-amber-900/50">
+                        <h3 id="export-folder-notice-title" className="text-lg font-semibold text-amber-700 dark:text-amber-300">
+                            导出目录未设置
+                        </h3>
+                    </div>
+                    <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-200">
+                        当前项目尚未设置导出目录，建议先在 Export 菜单中点击 Set Export Folder 进行设置。
+                        若继续导出，本次将使用默认文件选择逻辑。
+                    </div>
+                    <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-4 dark:border-zinc-700">
+                        <button
+                            onClick={() => resolveExportFolderNotice(false)}
+                            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-zinc-600 dark:text-gray-200 dark:hover:bg-zinc-800"
+                        >
+                            取消
+                        </button>
+                        <button
+                            onClick={() => resolveExportFolderNotice(true)}
+                            className="rounded-lg bg-[color:var(--flow-accent)] px-3 py-2 text-sm font-medium text-white hover:bg-[color:var(--flow-accent-strong)]"
+                        >
+                            继续导出
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
         {overwriteRiskConfirm && (
             <div
                 className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4"
