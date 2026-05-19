@@ -1,16 +1,18 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { StoreProvider, useStore } from './context/Store';
 import OutlineTree from './components/OutlineTree';
+import MinimalOutlineTree from './components/MinimalOutlineTree';
 import Editor from './components/Editor';
 import StatsModal from './components/StatsModal';
 import VersionsModal from './components/VersionsModal';
 import SplitPane from './components/SplitPane';
 import TaskPlanImportModal from './components/TaskPlanImportModal';
+import MindFlowWindow from './components/MindFlowWindow';
 import {
     IconDownload, IconUpload, IconChart, IconMenu, 
     IconLayoutHorizontal, IconListDetails, IconFilePlus,
     IconSun, IconMoon, IconViewSplit, IconViewEditor, IconViewOutline,
-    IconHome, IconChevronRight, IconChevronDown, IconGitCommit, IconMinus, IconSquare
+    IconHome, IconChevronRight, IconChevronDown, IconGitCommit, IconMinus, IconSquare, IconMindFlow
 } from './components/Icons';
 import {
     buildMarkdownExport,
@@ -34,6 +36,8 @@ import { ProjectData, LogNode, BackgroundPreset } from './types';
 
 const TASK_PLAN_PROJECT_PATH = 'global/任务计划.json';
 const TODAY_TODO_PROJECT_PATH = 'global/今日待办.json';
+
+type OutlineStyle = 'classic' | 'minimal';
 
 const GLOBAL_INTERACTION_TARGETS = [
   { id: 'taskPlan', label: '任务计划', projectName: '任务计划', projectPath: TASK_PLAN_PROJECT_PATH },
@@ -216,7 +220,13 @@ const ACCENT_PRESETS: Record<BackgroundPreset, { accent: string; accentStrong: s
 
 // --- Extracted Components for Stability ---
 
-const FocusArea: React.FC = () => {
+interface FocusAreaProps {
+    onOpenMindFlow: () => void;
+    outlineStyle: OutlineStyle;
+    onToggleOutlineStyle: () => void;
+}
+
+const FocusArea: React.FC<FocusAreaProps> = ({ onOpenMindFlow, outlineStyle, onToggleOutlineStyle }) => {
     const { state, dispatch } = useStore();
     const internalSplit = 'horizontal';
 
@@ -273,7 +283,29 @@ const FocusArea: React.FC = () => {
                         ))}
                     </div>
                 ) : (
-                    <span className="text-[10px] font-bold text-[color:var(--flow-accent-muted)] uppercase tracking-wider transition-colors">逻辑链 & 思维流</span>
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-[color:var(--flow-accent-muted)] uppercase tracking-wider transition-colors">逻辑链 & 思维流</span>
+                        <button
+                            type="button"
+                            onClick={onToggleOutlineStyle}
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+                                outlineStyle === 'minimal'
+                                    ? 'bg-[color:var(--flow-accent-soft)] text-[color:var(--flow-accent)]'
+                                    : 'text-[color:var(--flow-accent-muted)] hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)]'
+                            }`}
+                            title={outlineStyle === 'minimal' ? '切换到经典大纲' : '切换到简约大纲'}
+                        >
+                            {outlineStyle === 'minimal' ? '简约' : '经典'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onOpenMindFlow}
+                            className="rounded p-1 text-[color:var(--flow-accent-muted)] transition-colors hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)]"
+                            title="打开思维流视图"
+                        >
+                            <IconMindFlow className="h-3.5 w-3.5" />
+                        </button>
+                    </div>
                 )}
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
@@ -310,7 +342,7 @@ const FocusArea: React.FC = () => {
                     initialSize="60%"
                 >
                     <div className="h-full flex flex-col">
-                        <OutlineTree />
+                        {outlineStyle === 'minimal' ? <MinimalOutlineTree /> : <OutlineTree />}
                     </div>
                     <div className="h-full flex flex-col border-t border-gray-200 dark:border-zinc-700">
                         <Editor 
@@ -447,6 +479,8 @@ const ResearchLogApp: React.FC = () => {
   const globalInteractionMenuRef = useRef<HTMLDivElement>(null);
   const [isEditingProjectName, setIsEditingProjectName] = useState(false);
   const projectNameInputRef = useRef<HTMLInputElement>(null);
+  const [isMindFlowOpen, setIsMindFlowOpen] = useState(false);
+  const [outlineStyle, setOutlineStyle] = useState<OutlineStyle>('classic');
 
   useEffect(() => {
     return () => {
@@ -1878,7 +1912,11 @@ const ResearchLogApp: React.FC = () => {
                 <div className="relative h-full w-full">
                     {/* Drawer is shown if NOT in editor mode */}
                     <div className={`fixed inset-y-0 left-0 z-40 w-3/4 bg-white/62 dark:bg-zinc-950/62 backdrop-blur-sm shadow-2xl transform transition-transform duration-300 ${viewMode !== 'editor' ? 'translate-x-0' : '-translate-x-full'}`}>
-                        <FocusArea />
+                        <FocusArea
+                            outlineStyle={outlineStyle}
+                            onToggleOutlineStyle={() => setOutlineStyle((style) => style === 'classic' ? 'minimal' : 'classic')}
+                            onOpenMindFlow={() => setIsMindFlowOpen(true)}
+                        />
                     </div>
                     {viewMode !== 'editor' && (
                         <div 
@@ -1899,13 +1937,21 @@ const ResearchLogApp: React.FC = () => {
                             split="vertical"
                             initialSize="30%"
                         >
-                            <FocusArea />
+                            <FocusArea
+                                outlineStyle={outlineStyle}
+                                onToggleOutlineStyle={() => setOutlineStyle((style) => style === 'classic' ? 'minimal' : 'classic')}
+                                onOpenMindFlow={() => setIsMindFlowOpen(true)}
+                            />
                             {state.layoutMode === 'dual' ? <DualDetailArea /> : <DetailArea />}
                         </SplitPane>
                     ) : viewMode === 'outline' ? (
                          // Outline Only: Show FocusArea full width
                         <div className="h-full w-full bg-white/62 dark:bg-zinc-950/62">
-                            <FocusArea />
+                            <FocusArea
+                                outlineStyle={outlineStyle}
+                                onToggleOutlineStyle={() => setOutlineStyle((style) => style === 'classic' ? 'minimal' : 'classic')}
+                                onOpenMindFlow={() => setIsMindFlowOpen(true)}
+                            />
                         </div>
                     ) : (
                         // Editor Only: Show DetailArea full width
@@ -1917,6 +1963,7 @@ const ResearchLogApp: React.FC = () => {
             )}
         </div>
 
+        <MindFlowWindow isOpen={isMindFlowOpen} onClose={() => setIsMindFlowOpen(false)} />
         <StatsModal />
         <VersionsModal onSaveCurrentVersion={handleSaveCurrentVersion} />
         <TaskPlanImportModal
