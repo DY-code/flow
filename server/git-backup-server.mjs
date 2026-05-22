@@ -940,6 +940,19 @@ const collectLocalProjectFiles = async (directoryPath, baseDir = directoryPath) 
   return files;
 };
 
+const resolveRequestedProjectPath = ({ projectPath, projectName, projectData }) => {
+  const safeProjectName = sanitizeFilename(projectName || projectData?.projectName);
+  const requestedProjectPath = typeof projectPath === 'string' && projectPath.trim()
+    ? projectPath.trim()
+    : typeof projectData?.currentProjectPath === 'string' && projectData.currentProjectPath.trim()
+      ? projectData.currentProjectPath.trim()
+      : `${safeProjectName}.json`;
+
+  return resolveProjectPath(requestedProjectPath);
+};
+
+const getBackupProjectPath = (relativePath) => path.posix.join(BACKUP_PROJECTS_DIRNAME, relativePath);
+
 const createBackupWorkspace = async (repoUrl, proxyOptions) => {
   const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'flow-backup-'));
 
@@ -971,6 +984,21 @@ const createBackupWorkspace = async (repoUrl, proxyOptions) => {
       await runGit(['checkout', '--orphan', 'main'], workspaceDir, proxyOptions);
     }
 
+    return workspaceDir;
+  } catch (error) {
+    await fs.rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+};
+
+const createReadonlyBackupWorkspace = async (repoUrl, proxyOptions) => {
+  const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'flow-history-'));
+
+  try {
+    await runGit(['init'], workspaceDir, proxyOptions);
+    await runGit(['remote', 'add', 'origin', repoUrl], workspaceDir, proxyOptions);
+    await runGit(['fetch', 'origin', 'main'], workspaceDir, proxyOptions);
+    await runGit(['checkout', '-B', 'main', 'origin/main'], workspaceDir, proxyOptions);
     return workspaceDir;
   } catch (error) {
     await fs.rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
@@ -1025,6 +1053,91 @@ const testConnection = async ({ repoUrl, proxyEnabled, httpProxy, httpsProxy }) 
   };
 };
 
+const parseGitHistoryOutput = (stdout) => stdout
+  .split('\x1e')
+  .map((record) => record.trim())
+  .filter(Boolean)
+  .map((record) => {
+    const [hash, shortHash, authorDate, commitDate, authorName, ...subjectParts] = record.split('\x1f');
+    return {
+      hash,
+      shortHash,
+      authorDate,
+      commitDate,
+      authorName,
+      subject: subjectParts.join('\x1f')
+    };
+  })
+  .filter((entry) => entry.hash && entry.shortHash)
+  .sort((a, b) => new Date(b.commitDate).getTime() - new Date(a.commitDate).getTime());
+
+const readGitProjectHistory = async ({ repoUrl, projectPath, projectName, proxyEnabled, httpProxy, httpsProxy }) => {
+  if (!repoUrl || typeof repoUrl !== 'string') {
+    throw new Error('repoUrl is required');
+  }
+
+  const proxyOptions = normalizeProxyOptions({ proxyEnabled, httpProxy, httpsProxy });
+  const trimmedRepoUrl = repoUrl.trim();
+  const { relativePath } = resolveRequestedProjectPath({ projectPath, projectName });
+  const backupProjectPath = getBackupProjectPath(relativePath);
+  const workspaceDir = await createReadonlyBackupWorkspace(trimmedRepoUrl, proxyOptions);
+
+  try {
+    const { stdout } = await runGit([
+      'log',
+      '--date=iso-strict',
+      '--format=%H%x1f%h%x1f%aI%x1f%cI%x1f%an%x1f%s%x1e',
+      '--',
+      backupProjectPath
+    ], workspaceDir, proxyOptions);
+
+    return {
+      projectPath: relativePath,
+      file: backupProjectPath,
+      history: parseGitHistoryOutput(stdout)
+    };
+  } finally {
+    await fs.rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+  }
+};
+
+const readGitProjectVersion = async ({ repoUrl, projectPath, projectName, commitHash, proxyEnabled, httpProxy, httpsProxy }) => {
+  if (!repoUrl || typeof repoUrl !== 'string') {
+    throw new Error('repoUrl is required');
+  }
+  if (!commitHash || typeof commitHash !== 'string' || !/^[0-9a-f]{7,40}$/i.test(commitHash.trim())) {
+    throw new Error('commitHash is required');
+  }
+
+  const proxyOptions = normalizeProxyOptions({ proxyEnabled, httpProxy, httpsProxy });
+  const trimmedRepoUrl = repoUrl.trim();
+  const normalizedCommitHash = commitHash.trim();
+  const { relativePath } = resolveRequestedProjectPath({ projectPath, projectName });
+  const backupProjectPath = getBackupProjectPath(relativePath);
+  const workspaceDir = await createReadonlyBackupWorkspace(trimmedRepoUrl, proxyOptions);
+
+  try {
+    const { stdout } = await runGit(['show', `${normalizedCommitHash}:${backupProjectPath}`], workspaceDir, proxyOptions);
+    const parsedProjectData = JSON.parse(stdout);
+    ensureProjectDataShape(parsedProjectData);
+    const projectData = normalizeProjectData(parsedProjectData, relativePath);
+
+    return {
+      projectPath: relativePath,
+      file: backupProjectPath,
+      commitHash: normalizedCommitHash,
+      projectData,
+      summary: {
+        projectName: projectData.projectName || getProjectDisplayName(relativePath, projectData),
+        nodeCount: projectData.nodes.length,
+        lastModified: projectData.metadata?.lastModified || null
+      }
+    };
+  } finally {
+    await fs.rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+  }
+};
+
 const pushProject = async ({ repoUrl, projectName, projectData, proxyEnabled, httpProxy, httpsProxy }) => {
   if (!repoUrl || typeof repoUrl !== 'string') {
     throw new Error('repoUrl is required');
@@ -1037,17 +1150,14 @@ const pushProject = async ({ repoUrl, projectName, projectData, proxyEnabled, ht
   const trimmedRepoUrl = repoUrl.trim();
 
   const safeProjectName = sanitizeFilename(projectName);
-  const requestedProjectPath = typeof projectData.currentProjectPath === 'string' && projectData.currentProjectPath.trim()
-    ? projectData.currentProjectPath.trim()
-    : `${safeProjectName}.json`;
-  const { resolvedPath, relativePath } = resolveProjectPath(requestedProjectPath);
+  const { resolvedPath, relativePath } = resolveRequestedProjectPath({ projectName, projectData });
   const normalizedProjectData = normalizeProjectData(projectData, relativePath);
 
   await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
   await fs.writeFile(resolvedPath, `${JSON.stringify(normalizedProjectData, null, 2)}
 `, 'utf-8');
 
-  const backupProjectPath = path.posix.join(BACKUP_PROJECTS_DIRNAME, relativePath);
+  const backupProjectPath = getBackupProjectPath(relativePath);
   const workspaceDir = await createBackupWorkspace(trimmedRepoUrl, proxyOptions);
 
   try {
@@ -1180,6 +1290,32 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: error instanceof Error ? error.message : 'Push failed'
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/git/history') {
+    try {
+      const body = await readJsonBody(req);
+      const result = await readGitProjectHistory(body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : '读取 GitHub 历史失败'
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/git/version') {
+    try {
+      const body = await readJsonBody(req);
+      const result = await readGitProjectVersion(body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : '读取 GitHub 历史版本失败'
       });
     }
     return;

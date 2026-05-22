@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../context/Store';
 import { LogNode } from '../types';
 import { formatCompactDateTime } from '../utils/helpers';
 import { IconTarget } from './Icons';
+import StatusMenu from './StatusMenu';
 
 const INDENT_SIZE = 24;
 
@@ -10,11 +11,20 @@ interface MinimalRow {
   node: LogNode;
   visualDepth: number;
   isCompressedFromParent: boolean;
+  isCompressionChainHead: boolean;
+  compressionAnchorVisualDepth: number | null;
 }
 
 const MinimalOutlineTree: React.FC = () => {
   const { state, dispatch } = useStore();
   const { nodes, activeNodeId, focusedNodeId, ui } = state;
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const inputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+
+  useEffect(() => {
+    if (editingId) inputRefs.current[editingId]?.focus();
+  }, [editingId]);
 
   const getVisibleNodes = () => {
     let filteredNodes: LogNode[] = nodes;
@@ -91,18 +101,31 @@ const MinimalOutlineTree: React.FC = () => {
     const previousNode = visibleNodes[index - 1];
     const isDirectChildOfPrevious = !!previousNode && node.depth === previousNode.depth + 1;
     const isCompressedFromParent = getVisibleDirectChildCount(node) <= 1 && isDirectChildOfPrevious && getVisibleDirectChildCount(previousNode) === 1;
-    const visualDepth = isCompressedFromParent
-      ? previousRow.visualDepth
+    const isCompressionChainHead = isCompressedFromParent && !previousRow.isCompressedFromParent;
+    const compressionAnchorVisualDepth = isCompressedFromParent
+      ? previousRow.compressionAnchorVisualDepth ?? previousRow.visualDepth
+      : null;
+    const visualDepth = compressionAnchorVisualDepth !== null
+      ? compressionAnchorVisualDepth + 1
       : actualDepth;
 
-    acc.push({ node, visualDepth, isCompressedFromParent });
+    acc.push({ node, visualDepth, isCompressedFromParent, isCompressionChainHead, compressionAnchorVisualDepth });
     return acc;
   }, []);
+
+  const shouldSkipOrdinaryVerticalContinuation = (row: MinimalRow, visualDepthToCheck: number) => (
+    row.isCompressedFromParent
+    && !row.isCompressionChainHead
+    && row.compressionAnchorVisualDepth === visualDepthToCheck - 1
+  );
 
   const shouldDrawVerticalLine = (currentIndex: number, visualDepthToCheck: number) => {
     for (let i = currentIndex + 1; i < rows.length; i += 1) {
       if (rows[i].visualDepth < visualDepthToCheck) return false;
-      if (rows[i].visualDepth === visualDepthToCheck) return true;
+      if (rows[i].visualDepth === visualDepthToCheck) {
+        if (shouldSkipOrdinaryVerticalContinuation(rows[i], visualDepthToCheck)) continue;
+        return true;
+      }
     }
     return false;
   };
@@ -113,22 +136,46 @@ const MinimalOutlineTree: React.FC = () => {
     return !!nextNode && nextNode.depth > node.depth;
   };
 
+  const handleTextChange = (id: string, newText: string) => {
+    dispatch({ type: 'UPDATE_NODE_META', payload: { id, text: newText } });
+
+    const oldContent = state.contentMap[id] || '';
+    const lines = oldContent.split('\n');
+    if (lines.length === 0) lines.push('');
+
+    const match = lines[0].match(/^#+\s/);
+    const prefix = match ? match[0] : '# ';
+    lines[0] = prefix + newText;
+
+    dispatch({ type: 'UPDATE_CONTENT', payload: { id, content: lines.join('\n') } });
+  };
+
+  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    event.stopPropagation();
+    if (event.key === 'Enter' || event.key === 'Escape') {
+      event.preventDefault();
+      setEditingId(null);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto pb-0 bg-white/62 dark:bg-zinc-950/62 backdrop-blur-sm outline-none transition-colors">
       {rows.map((row, index) => {
-        const { node, visualDepth, isCompressedFromParent } = row;
+        const { node, visualDepth, isCompressedFromParent, isCompressionChainHead } = row;
         const isActive = activeNodeId === node.id;
         const hasChildren = getHasChildren(node);
         const nodeLastModifiedLabel = formatCompactDateTime(node.lastModified);
         const arrowLeft = 4 + visualDepth * INDENT_SIZE + 12;
+        const isEditing = editingId === node.id;
+        const isMenuOpen = openMenuId === node.id;
 
         return (
           <div
             key={node.id}
             className="group relative flex min-w-0 items-center border-y border-transparent transition-colors hover:bg-gray-50 dark:hover:bg-zinc-800"
-            style={{ height: '36px' }}
+            style={{ height: '36px', zIndex: isMenuOpen ? 50 : 'auto' }}
             onClick={(event) => {
-              if ((event.target as HTMLElement).closest('button')) return;
+              if ((event.target as HTMLElement).closest('button,input')) return;
               dispatch({ type: 'SET_ACTIVE_NODE', payload: node.id });
             }}
           >
@@ -155,8 +202,8 @@ const MinimalOutlineTree: React.FC = () => {
                     className="absolute top-0 bottom-0"
                     style={{ left: `${4 + i * INDENT_SIZE}px`, width: `${INDENT_SIZE}px` }}
                   >
-                    {isParentLevel && isCompressedFromParent ? (
-                      <div className={`absolute left-1/2 w-px -translate-x-1/2 bg-gray-300 dark:bg-zinc-600 ${hasLine ? 'top-0 bottom-0' : 'top-0 h-1/2'}`} />
+                    {isParentLevel && isCompressedFromParent && !isCompressionChainHead ? (
+                      null
                     ) : isParentLevel ? (
                       <>
                         <div className={`absolute left-1/2 w-px -translate-x-1/2 bg-gray-300 dark:bg-zinc-600 ${hasLine ? 'top-0 bottom-0' : 'top-0 h-1/2'}`} />
@@ -169,7 +216,7 @@ const MinimalOutlineTree: React.FC = () => {
                 );
               })}
 
-              {isCompressedFromParent && (
+              {isCompressedFromParent && !isCompressionChainHead && (
                 <svg
                   className="absolute top-[-18px] z-20 h-9 w-4 overflow-visible text-gray-300 dark:text-zinc-600"
                   style={{ left: `${arrowLeft - 8}px` }}
@@ -218,17 +265,53 @@ const MinimalOutlineTree: React.FC = () => {
                 `} />
               </button>
 
-              <div className="ml-1 flex h-full min-w-0 flex-1 items-center">
-                <span className={`
-                  truncate text-sm
-                  ${isActive ? 'font-bold text-gray-900 dark:text-white' : 'font-medium'}
-                  ${!node.text && !isActive ? 'text-gray-400 dark:text-gray-500 italic' : ''}
-                  ${node.text && !isActive ? 'text-gray-700 dark:text-gray-200' : ''}
-                `}>
-                  {node.text || 'Untitled'}
-                </span>
+              <div className="mx-0.5 shrink-0">
+                <StatusMenu
+                  currentStatus={node.status}
+                  onChange={(status) => dispatch({ type: 'SET_STATUS', payload: { id: node.id, status } })}
+                  isOpen={isMenuOpen}
+                  onToggle={() => setOpenMenuId(isMenuOpen ? null : node.id)}
+                  showLabel={false}
+                />
+              </div>
 
-                {ui.showOutlineDetails && node.desc && (
+              <div className="ml-1 flex h-full min-w-0 flex-1 items-center">
+                {isEditing ? (
+                  <input
+                    ref={(element) => {
+                      if (element) inputRefs.current[node.id] = element;
+                      else delete inputRefs.current[node.id];
+                    }}
+                    type="text"
+                    value={node.text}
+                    onChange={(event) => handleTextChange(node.id, event.target.value)}
+                    onKeyDown={handleInputKeyDown}
+                    onBlur={() => setEditingId(null)}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                    className="min-w-[50px] flex-1 rounded-sm border border-[color:var(--flow-accent-border)] bg-white px-1 py-0.5 text-sm font-medium text-gray-900 focus:outline-none dark:bg-zinc-800 dark:text-gray-100"
+                    placeholder="Untitled"
+                  />
+                ) : (
+                  <span
+                    className={`
+                      truncate text-sm
+                      ${isActive ? 'font-bold text-gray-900 dark:text-white' : 'font-medium'}
+                      ${!node.text && !isActive ? 'text-gray-400 dark:text-gray-500 italic' : ''}
+                      ${node.text && !isActive ? 'text-gray-700 dark:text-gray-200' : ''}
+                    `}
+                    onDoubleClick={(event) => {
+                      event.stopPropagation();
+                      dispatch({ type: 'SET_ACTIVE_NODE', payload: node.id });
+                      setEditingId(node.id);
+                    }}
+                    title="双击编辑名称"
+                  >
+                    {node.text || 'Untitled'}
+                  </span>
+                )}
+
+                {!isEditing && ui.showOutlineDetails && node.desc && (
                   <span className="ml-3 max-w-[40%] shrink-0 truncate text-xs font-normal text-gray-400 select-none hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400">
                     {node.desc}
                   </span>

@@ -26,8 +26,12 @@ import {
 } from './utils/helpers';
 import {
     type ExportFolderFileEntry,
+    type RecentImportedProjectEntry,
     hasProjectExportDirectoryHandle,
     listProjectExportDirectoryFiles,
+    loadRecentImportedProjects,
+    readRecentImportedProjectFile,
+    saveRecentImportedProject,
     writeFileHandle,
     selectProjectExportDirectory
 } from './utils/fileHandleStore';
@@ -36,6 +40,7 @@ import { ProjectData, LogNode, BackgroundPreset } from './types';
 
 const TASK_PLAN_PROJECT_PATH = 'global/任务计划.json';
 const TODAY_TODO_PROJECT_PATH = 'global/今日待办.json';
+const IMPORT_PROJECT_JSON_PICKER_ID = 'flow-import-project-json';
 
 type OutlineStyle = 'classic' | 'minimal';
 
@@ -165,6 +170,15 @@ const getExportTargetProjectPrefix = (filename: string, extension: 'json' | 'md'
 
 const getSafeProjectFilenameBase = (projectName?: string | null): string => {
   return sanitizeFilename(projectName || 'flow') || 'flow';
+};
+
+const getGitBackupProjectFilenameBase = (projectName?: string | null): string => {
+  const fallback = 'untitled-project';
+  const safe = String(projectName || fallback)
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_');
+  return safe || fallback;
 };
 
 const getFilenameWithoutJsonExtension = (filename: string): string => {
@@ -442,6 +456,9 @@ const ResearchLogApp: React.FC = () => {
   const [isRecentProjectsMenuOpen, setIsRecentProjectsMenuOpen] = useState(false);
   const recentProjectsMenuRef = useRef<HTMLDivElement>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProjectEntry[]>([]);
+  const [recentImportedProjects, setRecentImportedProjects] = useState<RecentImportedProjectEntry[]>([]);
+  const [isGithubProjectsListOpen, setIsGithubProjectsListOpen] = useState(false);
+  const [isOpeningRecentImportedProjectId, setIsOpeningRecentImportedProjectId] = useState<string | null>(null);
   const [recentProjectsStatus, setRecentProjectsStatus] = useState<{ type: 'idle' | 'loading' | 'error'; message: string }>({
     type: 'idle',
     message: ''
@@ -472,6 +489,7 @@ const ResearchLogApp: React.FC = () => {
     type: 'idle',
     message: ''
   });
+  const [latestProjectStatusEvent, setLatestProjectStatusEvent] = useState<'unsaved' | 'exported' | 'versionBackup' | 'githubPushed'>('exported');
   
   // New Project Menu State
   const [isNewProjectMenuOpen, setIsNewProjectMenuOpen] = useState(false);
@@ -505,10 +523,32 @@ const ResearchLogApp: React.FC = () => {
     return lastModifiedTs > lastChangeEventTs + 100;
   })();
 
-  const hasCurrentVersionBackup = (() => {
-    if (!lastVersionBackupTs) return false;
-    // Yellow when not orange and version backup is newer than export.
-    return !hasUnsavedChanges && lastVersionBackupTs > lastExportedTs + 100;
+  const projectStatusIndicator = (() => {
+    if (latestProjectStatusEvent === 'unsaved') {
+      return {
+        className: 'bg-orange-500 animate-pulse',
+        title: 'Unexported changes'
+      };
+    }
+
+    if (latestProjectStatusEvent === 'githubPushed') {
+      return {
+        className: 'bg-[#8fb7c9]',
+        title: 'GitHub push successful'
+      };
+    }
+
+    if (latestProjectStatusEvent === 'versionBackup') {
+      return {
+        className: 'bg-yellow-400',
+        title: 'Current version backed up in Version History'
+      };
+    }
+
+    return {
+      className: 'bg-green-500',
+      title: 'All changes exported'
+    };
   })();
 
   const activeBackgroundPreset = BACKGROUND_PRESETS.find((preset) => preset.id === backgroundPreset) || BACKGROUND_PRESETS[0];
@@ -581,6 +621,14 @@ const ResearchLogApp: React.FC = () => {
     setHttpsProxy(localStorage.getItem(HTTPS_PROXY_STORAGE_KEY) || DEFAULT_HTTPS_PROXY);
   }, []);
 
+  useEffect(() => {
+    setLatestProjectStatusEvent(hasUnsavedChanges ? 'unsaved' : 'exported');
+  }, [currentProjectPath, state.metadata.createdAt]);
+
+  useEffect(() => {
+    if (hasUnsavedChanges) setLatestProjectStatusEvent('unsaved');
+  }, [hasUnsavedChanges, lastModifiedTs]);
+
   const loadRecentProjects = useCallback(async () => {
     setRecentProjectsStatus({ type: 'loading', message: '' });
 
@@ -609,6 +657,22 @@ const ResearchLogApp: React.FC = () => {
       void loadRecentProjects();
     }
   }, [isRecentProjectsMenuOpen, loadRecentProjects]);
+
+  const refreshRecentImportedProjects = useCallback(async () => {
+    setRecentImportedProjects(await loadRecentImportedProjects());
+  }, []);
+
+  useEffect(() => {
+    if (isRecentProjectsMenuOpen) {
+      void refreshRecentImportedProjects();
+    }
+  }, [isRecentProjectsMenuOpen, refreshRecentImportedProjects]);
+
+  useEffect(() => {
+    if (isImportMenuOpen) {
+      void refreshRecentImportedProjects();
+    }
+  }, [isImportMenuOpen, refreshRecentImportedProjects]);
 
   const handleOpenRecentProject = async (project: RecentProjectEntry) => {
     if (hasUnsavedChanges) {
@@ -672,6 +736,11 @@ const ResearchLogApp: React.FC = () => {
     return window.confirm('确定将今日待办的完成情况回写到任务计划吗？');
   };
 
+  const markProjectExported = () => {
+    dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+    setLatestProjectStatusEvent('exported');
+  };
+
   const handleSaveGlobalProject = async () => {
     if (!currentProjectPath || !isGlobalProject) return;
     if (!confirmGlobalAction('save')) return;
@@ -691,7 +760,7 @@ const ResearchLogApp: React.FC = () => {
         throw new Error(result?.error || '保存 global 项目失败');
       }
 
-      dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+      markProjectExported();
       await loadRecentProjects();
       alert('已保存到 global。');
     } catch (error: any) {
@@ -771,20 +840,74 @@ const ResearchLogApp: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    await importProjectJsonFile(file);
+    e.target.value = '';
+  };
+
+  const importProjectJsonFile = async (file: File, handle?: unknown) => {
     try {
       const text = await readTextFile(file);
       const json = JSON.parse(text);
       if (isProjectData(json)) {
         if(window.confirm('Overwrite current project?')) {
           dispatch({ type: 'IMPORT_DATA', payload: { data: json, projectPath: null } });
+          if (handle) {
+            const nextRecentImports = await saveRecentImportedProject({
+              fileName: file.name,
+              projectName: json.projectName || file.name,
+              handle
+            });
+            setRecentImportedProjects(nextRecentImports);
+          }
         }
       } else {
         alert('Invalid file format.');
       }
     } catch (err: any) {
       alert(err?.message || 'Failed to parse JSON.');
+    }
+  };
+
+  const handleImportProjectJsonClick = async () => {
+    setIsImportMenuOpen(false);
+
+    if (!('showOpenFilePicker' in window)) {
+      fileInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const [handle] = await (window as any).showOpenFilePicker({
+        id: IMPORT_PROJECT_JSON_PICKER_ID,
+        multiple: false,
+        types: [{
+          description: 'JSON Project',
+          accept: { 'application/json': ['.json'] }
+        }]
+      });
+
+      if (!handle) return;
+
+      const file = await handle.getFile();
+      await importProjectJsonFile(file, handle);
+    } catch (error: any) {
+      if (error?.name === 'AbortError') return;
+      alert(error?.message || 'Failed to import JSON.');
+    }
+  };
+
+  const handleRecentImportedProjectClick = async (entry: RecentImportedProjectEntry) => {
+    setIsImportMenuOpen(false);
+    setIsRecentProjectsMenuOpen(false);
+    setIsOpeningRecentImportedProjectId(entry.id);
+
+    try {
+      const file = await readRecentImportedProjectFile(entry);
+      await importProjectJsonFile(file, entry.handle);
+    } catch (error: any) {
+      alert(error?.message || '无法读取最近导入项目，请重新通过 Import JSON 选择文件。');
     } finally {
-      e.target.value = '';
+      setIsOpeningRecentImportedProjectId(null);
     }
   };
 
@@ -888,6 +1011,18 @@ const ResearchLogApp: React.FC = () => {
       layoutMode: state.layoutMode,
       ui: state.ui
   });
+
+  const getGithubHistoryProjectPath = () => (
+    currentProjectPath || `${getGitBackupProjectFilenameBase(state.projectName)}.json`
+  );
+
+  const handleRestoreGithubVersion = async (projectData: ProjectData, projectPath: string) => {
+    dispatch({
+      type: 'IMPORT_DATA',
+      payload: { data: projectData, projectPath, markAsUnsaved: true }
+    });
+    setLatestProjectStatusEvent('unsaved');
+  };
 
   const getCurrentProjectExportPickerId = () => buildProjectExportPickerId({
     currentProjectPath: state.currentProjectPath,
@@ -1145,6 +1280,7 @@ const ResearchLogApp: React.FC = () => {
       dispatch({ type: 'SAVE_VERSION' });
       await downloadJsonDirect(buildProjectData(), getVersionBackupFilename());
       dispatch({ type: 'MARK_VERSION_BACKUP' });
+      setLatestProjectStatusEvent('versionBackup');
   }, [dispatch, state.projectName, state.nodes, state.contentMap, state.metadata, state.layoutMode, state.ui]);
 
   useEffect(() => {
@@ -1178,7 +1314,7 @@ const ResearchLogApp: React.FC = () => {
     }
     const saved = await downloadJson(data, `${getSafeFilename()}.json`, { pickerId });
     if (saved) {
-        dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+        markProjectExported();
     }
     setIsExportMenuOpen(false);
   };
@@ -1200,7 +1336,7 @@ const ResearchLogApp: React.FC = () => {
     }
     const saved = await downloadMarkdown(data, `${getSafeFilename()}.md`, { pickerId });
     if (saved) {
-        dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+        markProjectExported();
     }
     setIsExportMenuOpen(false);
   };
@@ -1218,7 +1354,7 @@ const ResearchLogApp: React.FC = () => {
       if (!canSave) return;
 
       await writeFileHandle(targetFile.handle, JSON.stringify(data, null, 2));
-      dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+      markProjectExported();
     } catch (error: any) {
       alert(error?.message || '覆盖 JSON 文件失败。');
     } finally {
@@ -1239,7 +1375,7 @@ const ResearchLogApp: React.FC = () => {
       if (!canSave) return;
 
       await writeFileHandle(targetFile.handle, buildMarkdownExport(data));
-      dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+      markProjectExported();
     } catch (error: any) {
       alert(error?.message || '覆盖 Markdown 文件失败。');
     } finally {
@@ -1312,6 +1448,7 @@ const ResearchLogApp: React.FC = () => {
         }
 
         dispatch({ type: 'UPDATE_LAST_EXPORTED' });
+        setLatestProjectStatusEvent('githubPushed');
         setGitPushStatus({ type: 'success', message: result?.message || '推送成功。' });
     } catch (error: any) {
         const isTimeout = error?.name === 'AbortError';
@@ -1416,6 +1553,9 @@ const ResearchLogApp: React.FC = () => {
       return n?.text || 'Untitled';
   };
 
+  const globalRecentProjects = recentProjects.filter((project) => project.isGlobal);
+  const githubBackupProjects = recentProjects.filter((project) => !project.isGlobal);
+
   // Helper for view mode buttons
   const ViewModeButton = ({ mode, icon: Icon, title }: { mode: 'split' | 'editor' | 'outline', icon: any, title: string }) => (
     <button
@@ -1451,10 +1591,13 @@ const ResearchLogApp: React.FC = () => {
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">最近项目</div>
-                                        <div className="text-xs text-gray-500 dark:text-gray-400">按最近修改时间排序，global 固定置顶</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-400">global、最近导入与 GitHub 项目分组展示</div>
                                     </div>
                                     <button
-                                        onClick={() => void loadRecentProjects()}
+                                        onClick={() => {
+                                            void loadRecentProjects();
+                                            void refreshRecentImportedProjects();
+                                        }}
                                         className="rounded-md px-2 py-1 text-xs text-[color:var(--flow-accent-muted)] hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:text-[color:var(--flow-accent-muted)] dark:hover:bg-zinc-800 dark:hover:text-[color:var(--flow-accent)]"
                                         title="刷新项目列表"
                                     >
@@ -1483,41 +1626,110 @@ const ResearchLogApp: React.FC = () => {
                                 {recentProjectsStatus.type === 'error' && (
                                     <div className="px-4 py-4 text-sm text-red-600 dark:text-red-400">
                                         <div>{recentProjectsStatus.message}</div>
-                                        <div className="mt-2 text-xs text-red-500/80 dark:text-red-300/80">当前项目仍可继续编辑；恢复本地项目服务后即可重新使用最近项目与默认创建入口。</div>
+                                        <div className="mt-2 text-xs text-red-500/80 dark:text-red-300/80">当前项目仍可继续编辑；恢复本地项目服务后即可使用 global 和 GitHub 项目入口。</div>
                                     </div>
                                 )}
 
-                                {recentProjectsStatus.type !== 'loading' && recentProjectsStatus.type !== 'error' && recentProjects.length === 0 && (
-                                    <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">`flow-projects` 中还没有可打开的项目文件。</div>
+                                {recentProjectsStatus.type !== 'loading' && recentProjectsStatus.type !== 'error' && globalRecentProjects.length > 0 && (
+                                    <>
+                                        <div className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-zinc-500">Global</div>
+                                        {globalRecentProjects.map((project) => (
+                                            <button
+                                                key={project.relativePath}
+                                                onClick={() => void handleOpenRecentProject(project)}
+                                                disabled={isOpeningRecentProject !== null}
+                                                className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-[color:var(--flow-accent-soft)] disabled:cursor-wait disabled:opacity-70 dark:hover:bg-zinc-800"
+                                            >
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="rounded-full bg-[color:var(--flow-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--flow-accent)] dark:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent)]">
+                                                            全局
+                                                        </span>
+                                                        <span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                                                            {project.displayName}
+                                                        </span>
+                                                    </div>
+                                                    <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                                                        {project.relativePath}
+                                                    </div>
+                                                </div>
+                                                <div className="shrink-0 text-right text-[11px] text-gray-400 dark:text-gray-500">
+                                                    {isOpeningRecentProject === project.relativePath ? '打开中...' : new Date(project.modifiedAt).toLocaleString('zh-CN', { hour12: false })}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </>
                                 )}
 
-                                {recentProjectsStatus.type !== 'loading' && recentProjectsStatus.type !== 'error' && recentProjects.map((project) => (
-                                    <button
-                                        key={project.relativePath}
-                                        onClick={() => void handleOpenRecentProject(project)}
-                                        disabled={isOpeningRecentProject !== null}
-                                        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-[color:var(--flow-accent-soft)] disabled:cursor-wait disabled:opacity-70 dark:hover:bg-zinc-800"
-                                    >
-                                        <div className="min-w-0">
-                                            <div className="flex items-center gap-2">
-                                                {project.isGlobal && (
-                                                    <span className="rounded-full bg-[color:var(--flow-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--flow-accent)] dark:bg-[color:var(--flow-accent-soft)] dark:text-[color:var(--flow-accent)]">
-                                                        全局
-                                                    </span>
-                                                )}
-                                                <span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
-                                                    {project.displayName}
-                                                </span>
+                                <div className="border-t border-gray-100 px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:border-zinc-800 dark:text-zinc-500">最近本地项目</div>
+                                {recentImportedProjects.length === 0 ? (
+                                    <div className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">还没有通过 Import JSON 打开的本地项目。</div>
+                                ) : (
+                                    recentImportedProjects.map((project) => (
+                                        <button
+                                            key={project.id}
+                                            onClick={() => void handleRecentImportedProjectClick(project)}
+                                            disabled={isOpeningRecentImportedProjectId !== null}
+                                            className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-[color:var(--flow-accent-soft)] disabled:cursor-wait disabled:opacity-70 dark:hover:bg-zinc-800"
+                                            title={`${project.projectName}\n${project.fileName}`}
+                                        >
+                                            <div className="min-w-0">
+                                                <div className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                                                    {project.projectName || project.fileName}
+                                                </div>
+                                                <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                                                    {project.fileName}
+                                                </div>
                                             </div>
-                                            <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
-                                                {project.relativePath}
+                                            <div className="shrink-0 text-right text-[11px] text-gray-400 dark:text-gray-500">
+                                                {isOpeningRecentImportedProjectId === project.id ? '打开中...' : formatCompactDateTime(project.importedAt)}
                                             </div>
-                                        </div>
-                                        <div className="shrink-0 text-right text-[11px] text-gray-400 dark:text-gray-500">
-                                            {isOpeningRecentProject === project.relativePath ? '打开中...' : new Date(project.modifiedAt).toLocaleString('zh-CN', { hour12: false })}
-                                        </div>
-                                    </button>
-                                ))}
+                                        </button>
+                                    ))
+                                )}
+
+                                {recentProjectsStatus.type !== 'loading' && recentProjectsStatus.type !== 'error' && (
+                                    <div className="border-t border-gray-100 dark:border-zinc-800">
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsGithubProjectsListOpen((open) => !open)}
+                                            className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium text-gray-800 transition-colors hover:bg-[color:var(--flow-accent-soft)] dark:text-gray-100 dark:hover:bg-zinc-800"
+                                        >
+                                            <span>GitHub 项目列表</span>
+                                            <span className="flex items-center gap-2 text-xs text-gray-400 dark:text-zinc-500">
+                                                {githubBackupProjects.length} 个
+                                                <IconChevronDown className={`h-3.5 w-3.5 transition-transform ${isGithubProjectsListOpen ? 'rotate-180' : ''}`} />
+                                            </span>
+                                        </button>
+
+                                        {isGithubProjectsListOpen && (
+                                            githubBackupProjects.length === 0 ? (
+                                                <div className="px-4 pb-4 text-sm text-gray-500 dark:text-gray-400">暂无已推送到 GitHub 的项目记录。</div>
+                                            ) : (
+                                                githubBackupProjects.map((project) => (
+                                                    <button
+                                                        key={project.relativePath}
+                                                        onClick={() => void handleOpenRecentProject(project)}
+                                                        disabled={isOpeningRecentProject !== null}
+                                                        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-[color:var(--flow-accent-soft)] disabled:cursor-wait disabled:opacity-70 dark:hover:bg-zinc-800"
+                                                    >
+                                                        <div className="min-w-0">
+                                                            <div className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                                                                {project.displayName}
+                                                            </div>
+                                                            <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                                                                {project.relativePath}
+                                                            </div>
+                                                        </div>
+                                                        <div className="shrink-0 text-right text-[11px] text-gray-400 dark:text-gray-500">
+                                                            {isOpeningRecentProject === project.relativePath ? '打开中...' : new Date(project.modifiedAt).toLocaleString('zh-CN', { hour12: false })}
+                                                        </div>
+                                                    </button>
+                                                ))
+                                            )
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -1569,10 +1781,8 @@ const ResearchLogApp: React.FC = () => {
                         )}
                         {/* Status Indicator */}
                         <div 
-                            className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                hasUnsavedChanges ? 'bg-orange-500 animate-pulse' : hasCurrentVersionBackup ? 'bg-yellow-400' : 'bg-green-500'
-                            }`} 
-                            title={hasUnsavedChanges ? "Unexported changes" : hasCurrentVersionBackup ? "Current version backed up in Version History" : "All changes exported"}
+                            className={`w-2 h-2 rounded-full flex-shrink-0 ${projectStatusIndicator.className}`} 
+                            title={projectStatusIndicator.title}
                         />
                         {isNonGlobalProject && (
                             <div className="relative ml-1" ref={globalInteractionMenuRef}>
@@ -1855,10 +2065,7 @@ const ResearchLogApp: React.FC = () => {
                     {isImportMenuOpen && (
                         <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-zinc-800 rounded-md shadow-lg py-1 border border-[color:var(--flow-accent-border)]/70 dark:border-[color:var(--flow-accent-border)] z-50">
                             <button
-                                onClick={() => {
-                                    setIsImportMenuOpen(false);
-                                    fileInputRef.current?.click();
-                                }}
+                                onClick={() => void handleImportProjectJsonClick()}
                                 className="block w-full text-left px-4 py-2 text-sm text-[color:var(--flow-accent-muted)] dark:text-gray-200 hover:bg-[color:var(--flow-accent-soft)] hover:text-[color:var(--flow-accent)] dark:hover:bg-zinc-700 dark:hover:text-[color:var(--flow-accent)]"
                             >
                                 Import JSON (Overwrite Project)
@@ -1965,7 +2172,19 @@ const ResearchLogApp: React.FC = () => {
 
         <MindFlowWindow isOpen={isMindFlowOpen} onClose={() => setIsMindFlowOpen(false)} />
         <StatsModal />
-        <VersionsModal onSaveCurrentVersion={handleSaveCurrentVersion} />
+        <VersionsModal
+            onSaveCurrentVersion={handleSaveCurrentVersion}
+            gitHistoryConfig={{
+                repoUrl: gitRepoUrl,
+                projectName: state.projectName,
+                projectPath: getGithubHistoryProjectPath(),
+                proxyEnabled,
+                httpProxy,
+                httpsProxy
+            }}
+            hasUnsavedChanges={hasUnsavedChanges}
+            onRestoreGithubVersion={handleRestoreGithubVersion}
+        />
         <TaskPlanImportModal
             isOpen={isTaskPlanImportModalOpen}
             sourceLabel={getGlobalInteractionTarget(activeGlobalImportTargetId).label}

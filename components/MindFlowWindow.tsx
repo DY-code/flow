@@ -16,6 +16,9 @@ interface FlowTreeItem {
   status?: NodeStatus;
   lastModified: string;
   depth: number;
+  siblingIndex?: number;
+  isMain?: boolean;
+  isPlanRoot?: boolean;
   isProjectRoot?: boolean;
   nodeCount?: number;
 }
@@ -35,8 +38,9 @@ interface FlowNodeLayout {
 }
 
 interface FlowEdge {
-  from: Point;
-  to: Point;
+  fromId: string;
+  toId: string;
+  isMain: boolean;
 }
 
 interface Point {
@@ -48,12 +52,16 @@ const NODE_WIDTH = 176;
 const NODE_HEIGHT = 46;
 const PROGRESS_GAP_X = 230;
 const SIBLING_GAP_Y = 30;
+const BRANCH_GAP_Y = NODE_HEIGHT + SIBLING_GAP_Y + 16;
+const MIN_NODE_GAP_Y = NODE_HEIGHT + SIBLING_GAP_Y;
 const CANVAS_PADDING = 96;
 const MIN_WINDOW_WIDTH = 520;
 const MIN_WINDOW_HEIGHT = 420;
 const MIN_ZOOM = 0.45;
 const MAX_ZOOM = 1.9;
 const PROJECT_ROOT_ID = '__project_root__';
+const PLAN_NODE_PREFIX = '[计划] ';
+const MAIN_FLOW_BENDS = [0, -18, 16, -12, 18, -14, 10];
 
 const STATUS_LABELS: Record<NodeStatus, string> = {
   waiting: '待进行',
@@ -106,7 +114,8 @@ const buildTree = (nodes: LogNode[]): TreeNode[] => {
         desc: node.desc,
         status: node.status,
         lastModified: node.lastModified,
-        depth: node.depth
+        depth: node.depth,
+        isPlanRoot: node.depth === 0 && node.text.startsWith(PLAN_NODE_PREFIX)
       },
       children: []
     };
@@ -116,6 +125,9 @@ const buildTree = (nodes: LogNode[]): TreeNode[] => {
     }
 
     const parent = stack[stack.length - 1];
+    const siblings = parent ? parent.children : roots;
+    treeNode.item.siblingIndex = siblings.length;
+
     if (parent) {
       parent.children.push(treeNode);
     } else {
@@ -128,7 +140,32 @@ const buildTree = (nodes: LogNode[]): TreeNode[] => {
   return roots;
 };
 
-const getRootNodeIds = (nodes: LogNode[]) => nodes.filter((node) => node.depth === 0).map((node) => node.id);
+const splitRootNodes = (roots: TreeNode[]) => ({
+  planRoots: roots.filter((node) => node.item.isPlanRoot),
+  normalRoots: roots.filter((node) => !node.item.isPlanRoot)
+});
+
+const markMainPath = (roots: TreeNode[]) => {
+  const mainPathIds = new Set<string>();
+  let current = roots[0];
+
+  while (current) {
+    current.item.isMain = true;
+    mainPathIds.add(current.item.id);
+    current = current.children[0];
+  }
+
+  return mainPathIds;
+};
+
+const getDefaultExpandedNodeIds = (nodes: LogNode[]) => {
+  const treeRoots = buildTree(nodes);
+  const { normalRoots } = splitRootNodes(treeRoots);
+  const mainPathIds = markMainPath(normalRoots);
+  return new Set([PROJECT_ROOT_ID, ...mainPathIds]);
+};
+
+const getNodeSignature = (nodes: LogNode[]) => nodes.map((node) => `${node.id}:${node.depth}`).join('|');
 
 const buildMindFlowLayout = (
   nodes: LogNode[],
@@ -136,6 +173,9 @@ const buildMindFlowLayout = (
   projectName: string,
   projectLastModified: string
 ) => {
+  const treeRoots = buildTree(nodes);
+  const { planRoots, normalRoots } = splitRootNodes(treeRoots);
+  const mainPathIds = markMainPath(normalRoots);
   const roots: TreeNode[] = [{
     item: {
       id: PROJECT_ROOT_ID,
@@ -143,10 +183,11 @@ const buildMindFlowLayout = (
       desc: `${nodes.length} 个节点`,
       lastModified: projectLastModified,
       depth: -1,
+      siblingIndex: 0,
       isProjectRoot: true,
       nodeCount: nodes.length
     },
-    children: buildTree(nodes)
+    children: [...planRoots, ...normalRoots]
   }];
   const rawNodes = new Map<string, FlowNodeLayout>();
   const rawEdges: FlowEdge[] = [];
@@ -155,53 +196,52 @@ const buildMindFlowLayout = (
     expandedNodeIds.has(item.item.id) ? item.children : []
   );
 
-  const getSubtreeHeight = (item: TreeNode): number => {
+  const getFlowChildren = (item: TreeNode) => {
     const children = getVisibleChildren(item);
-    if (!children.length) return NODE_HEIGHT;
-    return Math.max(NODE_HEIGHT, getSiblingGroupHeight(children));
+
+    if (!item.item.isProjectRoot) {
+      return {
+        mainChild: children[0],
+        branchChildren: children.slice(1)
+      };
+    }
+
+    const visiblePlanRoots = children.filter((child) => child.item.isPlanRoot);
+    const visibleNormalRoots = children.filter((child) => !child.item.isPlanRoot);
+
+    return {
+      mainChild: visibleNormalRoots[0],
+      branchChildren: [...visiblePlanRoots, ...visibleNormalRoots.slice(1)]
+    };
   };
 
-  const getSiblingGroupHeight = (items: TreeNode[]): number => {
-    if (!items.length) return 0;
+  const getMainBend = (flowIndex: number) => MAIN_FLOW_BENDS[flowIndex % MAIN_FLOW_BENDS.length];
 
-    return items.reduce((height, item, index) => {
-      return height + getSubtreeHeight(item) + (index > 0 ? SIBLING_GAP_Y : 0);
-    }, 0);
+  const getBranchOffset = (index: number) => {
+    const direction = index % 2 === 0 ? -1 : 1;
+    const lane = Math.floor(index / 2) + 1;
+    return direction * lane * BRANCH_GAP_Y;
   };
 
-  const placeSiblingGroup = (items: TreeNode[], startX: number, topY: number, anchor: Point) => {
-    let cursorY = topY;
+  const getRootBranchOffset = (branchChildren: TreeNode[], child: TreeNode) => {
+    if (child.item.isPlanRoot) {
+      const planBranches = branchChildren.filter((item) => item.item.isPlanRoot);
+      const planIndex = planBranches.findIndex((item) => item.item.id === child.item.id);
+      return -(planBranches.length - planIndex) * BRANCH_GAP_Y;
+    }
 
-    items.forEach((item, index) => {
-      if (index > 0) cursorY += SIBLING_GAP_Y;
-
-      const rootPoint = placeNodeSubtree(item, startX, cursorY);
-      rawEdges.push({
-        from: anchor,
-        to: rootPoint
-      });
-
-      cursorY += getSubtreeHeight(item);
-    });
+    const normalBranchIndex = branchChildren.filter((item) => !item.item.isPlanRoot).findIndex((item) => item.item.id === child.item.id);
+    return (normalBranchIndex + 1) * BRANCH_GAP_Y;
   };
 
-  const placeRootGroup = (items: TreeNode[], startX: number, topY: number) => {
-    let cursorY = topY;
-
-    items.forEach((item, index) => {
-      if (index > 0) cursorY += SIBLING_GAP_Y;
-      placeNodeSubtree(item, startX, cursorY);
-      cursorY += getSubtreeHeight(item);
-    });
+  const isMainLink = (fromId: string, toId: string) => {
+    if (!mainPathIds.has(toId)) return false;
+    return fromId === PROJECT_ROOT_ID || mainPathIds.has(fromId);
   };
 
-  const placeNodeSubtree = (item: TreeNode, x: number, topY: number): Point => {
-    const children = getVisibleChildren(item);
-    const childGroupHeight = getSiblingGroupHeight(children);
-    const subtreeHeight = getSubtreeHeight(item);
-    const y = children.length
-      ? topY + Math.max(NODE_HEIGHT, childGroupHeight) / 2 - NODE_HEIGHT / 2
-      : topY;
+  const placeNodeFlow = (item: TreeNode, x: number, centerY: number, flowIndex: number) => {
+    const { mainChild, branchChildren } = getFlowChildren(item);
+    const y = centerY - NODE_HEIGHT / 2;
 
     rawNodes.set(item.item.id, {
       item: item.item,
@@ -212,27 +252,120 @@ const buildMindFlowLayout = (
       hiddenChildCount: expandedNodeIds.has(item.item.id) ? 0 : item.children.length
     });
 
-    if (children.length) {
-      placeSiblingGroup(
-        children,
-        x + PROGRESS_GAP_X,
-        topY + Math.max(0, (subtreeHeight - childGroupHeight) / 2),
-        { x: x + NODE_WIDTH, y: y + NODE_HEIGHT / 2 }
-      );
-    }
+    if (mainChild || branchChildren.length) {
+      const childX = x + PROGRESS_GAP_X;
 
-    return { x, y: y + NODE_HEIGHT / 2 };
+      if (mainChild) {
+        const mainCenterY = centerY + getMainBend(flowIndex + 1);
+
+        rawEdges.push({
+          fromId: item.item.id,
+          toId: mainChild.item.id,
+          isMain: isMainLink(item.item.id, mainChild.item.id)
+        });
+        placeNodeFlow(mainChild, childX, mainCenterY, flowIndex + 1);
+      }
+
+      branchChildren.forEach((child, index) => {
+        const branchCenterY = centerY + (
+          item.item.isProjectRoot ? getRootBranchOffset(branchChildren, child) : getBranchOffset(index)
+        );
+
+        rawEdges.push({
+          fromId: item.item.id,
+          toId: child.item.id,
+          isMain: isMainLink(item.item.id, child.item.id)
+        });
+        placeNodeFlow(child, childX, branchCenterY, flowIndex + 1);
+      });
+    }
   };
 
-  placeRootGroup(roots, 0, 0);
+  placeNodeFlow(roots[0], 0, 0, 0);
+
+  const resolveColumnCollisions = () => {
+    const resolvedNodes = new Map<string, FlowNodeLayout>(
+      Array.from(rawNodes.entries()).map(([id, item]) => [id, { ...item }])
+    );
+    const columns = new Map<number, FlowNodeLayout[]>();
+
+    resolvedNodes.forEach((item) => {
+      const columnItems = columns.get(item.x) || [];
+      columnItems.push(item);
+      columns.set(item.x, columnItems);
+    });
+
+    columns.forEach((columnItems) => {
+      const pinnedItem = columnItems.find((item) => item.item.isProjectRoot || item.item.isMain);
+
+      if (pinnedItem) {
+        const pinnedY = pinnedItem.y;
+        const aboveItems = columnItems
+          .filter((item) => item.item.id !== pinnedItem.item.id && item.y < pinnedY)
+          .sort((a, b) => b.y - a.y);
+        const belowItems = columnItems
+          .filter((item) => item.item.id !== pinnedItem.item.id && item.y >= pinnedY)
+          .sort((a, b) => a.y - b.y);
+        let nextY = pinnedY - MIN_NODE_GAP_Y;
+
+        aboveItems.forEach((item) => {
+          const resolvedItem = resolvedNodes.get(item.item.id);
+          if (!resolvedItem) return;
+
+          resolvedItem.y = Math.min(resolvedItem.y, nextY);
+          nextY = resolvedItem.y - MIN_NODE_GAP_Y;
+        });
+
+        nextY = pinnedY + MIN_NODE_GAP_Y;
+        belowItems.forEach((item) => {
+          const resolvedItem = resolvedNodes.get(item.item.id);
+          if (!resolvedItem) return;
+
+          resolvedItem.y = Math.max(resolvedItem.y, nextY);
+          nextY = resolvedItem.y + MIN_NODE_GAP_Y;
+        });
+
+        return;
+      }
+
+      const sortedItems = [...columnItems].sort((a, b) => a.y - b.y);
+      let nextY = Number.NEGATIVE_INFINITY;
+
+      sortedItems.forEach((item) => {
+        const resolvedItem = resolvedNodes.get(item.item.id);
+        if (!resolvedItem) return;
+
+        resolvedItem.y = Math.max(resolvedItem.y, nextY);
+        nextY = resolvedItem.y + MIN_NODE_GAP_Y;
+      });
+    });
+
+    return resolvedNodes;
+  };
+
+  const resolvedNodes = resolveColumnCollisions();
+
+  const edges = rawEdges
+    .map((edge) => {
+      const fromNode = resolvedNodes.get(edge.fromId);
+      const toNode = resolvedNodes.get(edge.toId);
+      if (!fromNode || !toNode) return null;
+
+      return {
+        ...edge,
+        from: { x: fromNode.x + NODE_WIDTH, y: fromNode.y + NODE_HEIGHT / 2 },
+        to: { x: toNode.x, y: toNode.y + NODE_HEIGHT / 2 }
+      };
+    })
+    .filter((edge): edge is FlowEdge & { from: Point; to: Point } => edge !== null);
 
   const allX = [
-    ...Array.from(rawNodes.values()).flatMap((item) => [item.x, item.x + NODE_WIDTH]),
-    ...rawEdges.flatMap((edge) => [edge.from.x, edge.to.x])
+    ...Array.from(resolvedNodes.values()).flatMap((item) => [item.x, item.x + NODE_WIDTH]),
+    ...edges.flatMap((edge) => [edge.from.x, edge.to.x])
   ];
   const allY = [
-    ...Array.from(rawNodes.values()).flatMap((item) => [item.y, item.y + NODE_HEIGHT]),
-    ...rawEdges.flatMap((edge) => [edge.from.y, edge.to.y])
+    ...Array.from(resolvedNodes.values()).flatMap((item) => [item.y, item.y + NODE_HEIGHT]),
+    ...edges.flatMap((edge) => [edge.from.y, edge.to.y])
   ];
 
   const minX = Math.min(...allX, 0);
@@ -243,12 +376,12 @@ const buildMindFlowLayout = (
   const offsetY = CANVAS_PADDING - minY;
 
   return {
-    nodes: Array.from(rawNodes.values()).map((item) => ({
+    nodes: Array.from(resolvedNodes.values()).map((item) => ({
       ...item,
       x: item.x + offsetX,
       y: item.y + offsetY
     })),
-    edges: rawEdges.map((edge) => ({
+    edges: edges.map((edge) => ({
       ...edge,
       from: { x: edge.from.x + offsetX, y: edge.from.y + offsetY },
       to: { x: edge.to.x + offsetX, y: edge.to.y + offsetY }
@@ -278,6 +411,7 @@ const MindFlowWindow: React.FC<MindFlowWindowProps> = ({ isOpen, onClose }) => {
   const [isPanning, setIsPanning] = useState(false);
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(() => new Set());
   const [hoveredDetail, setHoveredDetail] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+  const nodeSignature = useMemo(() => getNodeSignature(state.nodes), [state.nodes]);
   const layout = useMemo(
     () => buildMindFlowLayout(state.nodes, expandedNodeIds, state.projectName, state.metadata.lastModified),
     [state.nodes, expandedNodeIds, state.projectName, state.metadata.lastModified]
@@ -311,10 +445,10 @@ const MindFlowWindow: React.FC<MindFlowWindowProps> = ({ isOpen, onClose }) => {
     const size = getInitialWindowSize();
     setWindowSize(size);
     setWindowPosition(getInitialWindowPosition(size));
-    setExpandedNodeIds(new Set([PROJECT_ROOT_ID, ...getRootNodeIds(state.nodes)]));
+    setExpandedNodeIds(getDefaultExpandedNodeIds(state.nodes));
     setHoveredDetail(null);
     defaultViewPendingRef.current = true;
-  }, [isOpen, state.nodes]);
+  }, [isOpen, nodeSignature]);
 
   useEffect(() => {
     if (!isOpen || !defaultViewPendingRef.current) return;
@@ -503,7 +637,7 @@ const MindFlowWindow: React.FC<MindFlowWindowProps> = ({ isOpen, onClose }) => {
       >
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-gray-800 dark:text-gray-100">思维流视图</div>
-          <div className="text-[11px] text-gray-500 dark:text-gray-400">父子向右递进，同级纵向并列</div>
+          <div className="text-[11px] text-gray-500 dark:text-gray-400">主线横向流动，支线分流展开</div>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -572,7 +706,7 @@ const MindFlowWindow: React.FC<MindFlowWindowProps> = ({ isOpen, onClose }) => {
                   key={`progress-${index}`}
                   d={buildPath(edge.from, edge.to)}
                   fill="none"
-                  stroke="rgba(107, 114, 128, 0.46)"
+                  stroke={edge.isMain ? 'var(--flow-accent)' : 'rgba(107, 114, 128, 0.46)'}
                   strokeWidth={2.4}
                   strokeLinecap="round"
                 />
@@ -588,7 +722,7 @@ const MindFlowWindow: React.FC<MindFlowWindowProps> = ({ isOpen, onClose }) => {
                   className={`mind-flow-node absolute flex items-center rounded-md border px-3 text-left text-sm font-medium shadow-sm transition-colors ${
                     item.item.isProjectRoot
                       ? 'border-[color:var(--flow-accent-border)] bg-[color:var(--flow-accent-soft)] text-gray-900 shadow-md dark:bg-zinc-900 dark:text-gray-100'
-                      : item.item.depth === 0
+                      : item.item.isMain
                       ? 'border-[color:var(--flow-accent-border)] bg-white text-gray-900 shadow-md dark:bg-zinc-900 dark:text-gray-100'
                       : 'border-gray-200 bg-white/95 text-gray-700 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-gray-200'
                   } ${isHovered ? 'ring-2 ring-[color:var(--flow-accent-border)]' : 'hover:border-[color:var(--flow-accent-border)]'} ${item.canToggle ? 'cursor-pointer' : 'cursor-default'}`}

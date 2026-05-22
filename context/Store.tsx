@@ -829,6 +829,7 @@ const reducer = (state: State, action: Action): State => {
         layoutMode: normalizeLayoutMode(data.layoutMode),
         metadata: {
             ...data.metadata,
+            lastModified: action.payload.markAsUnsaved ? now : data.metadata.lastModified,
             lastExported: action.payload.markAsUnsaved ? data.metadata.lastExported : now
         },
         activeNodeId: importActiveNodeId,
