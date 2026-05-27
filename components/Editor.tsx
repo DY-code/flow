@@ -1,31 +1,26 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useId, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import Markdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
 import { useStore } from '../context/Store';
 import { IconEye, IconEdit, IconDownload, IconUpload } from './Icons';
 import StatusMenu from './StatusMenu'; 
 import { formatDate, sanitizeFilename, formatDateForFilename, saveFile, readTextFile } from '../utils/helpers';
-import Editor from 'react-simple-code-editor';
-import Prism from 'prismjs';
-
-// Define a simplified markdown grammar for Prism
-const grammar = {
-    'heading': { pattern: /^#{1,6}.+/m },
-    'bold': { pattern: /\*\*(?:(?!\*\*).)+\*\*|__(?:(?!__).)+__/ },
-    'italic': { pattern: /\*(?:(?!\*).)+\*|_(?:(?!_).)+_/ },
-    'underline': { pattern: /<u>(?:(?!<\/u>).)+<\/u>/ },
-    'strike': { pattern: /~~(?:(?!~~).)+~~/ },
-    'link': { pattern: /\[(?:(?!\]).)+\]\((?:(?!\)).)+\)/ },
-    'list': { pattern: /^[\t ]*[-*+] /m },
-    'quote': { pattern: /^[\t ]*> /m },
-    'code': { pattern: /(`+)(?:(?!\1).)+\1/ },
-};
+import MarkdownCodeMirrorEditor, { MarkdownCodeMirrorEditorHandle } from './MarkdownCodeMirrorEditor';
 
 interface PreviewHeadingItem {
   level: number;
   text: string;
   domIndex: number;
 }
+
+const PREVIEW_HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6';
+const MARKDOWN_HEADING_PATTERN = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+
+const getHeadingLevel = (element: Element): number => {
+  const level = Number(element.tagName.slice(1));
+  return Number.isFinite(level) ? level : 6;
+};
 
 const stripMarkdownInline = (text: string): string => {
   return text
@@ -42,7 +37,7 @@ const parsePreviewHeadings = (markdown: string): PreviewHeadingItem[] => {
   let domIndex = 0;
 
   for (const line of lines) {
-    const match = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    const match = line.match(MARKDOWN_HEADING_PATTERN);
     if (!match) continue;
     const level = match[1].length;
     const text = stripMarkdownInline(match[2]);
@@ -78,12 +73,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
   const titleFastUpdateRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Meta Update (Fast)
   const descFastUpdateRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Meta Update (Fast)
 
-  // Unique ID for textarea to allow direct DOM manipulation for Import
-  const uniqueId = useId();
-  const textareaId = `editor-area-${uniqueId}`;
-  const selectionRef = useRef<{ start: number; end: number } | null>(null);
-  const shouldRestoreSelectionRef = useRef(false);
-  const skipSelectionCaptureRef = useRef(false);
+  const codeMirrorEditorRef = useRef<MarkdownCodeMirrorEditorHandle>(null);
 
   // Content Source
   const contentKey = isRoot ? 'root' : nodeId!;
@@ -200,9 +190,6 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
   }, [focusedNode, focusedNodeRaw]);
 
   const isRootFocusDisplay = isRoot && state.ui.showFocusedRoot && !!focusedNode;
-  const rootTextareaId = isRoot
-    ? `${textareaId}-${isRootFocusDisplay ? `focus-${focusedNode?.id || 'none'}` : 'global'}`
-    : textareaId;
 
   useEffect(() => {
     if (!isRoot) return;
@@ -217,12 +204,6 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
       lastExternalFocusedBodyRef.current = incomingFocusedBody;
     }
   }, [isRoot, focusedNodeBody]);
-
-  // Reset selection tracking when switching to a different content source
-  useEffect(() => {
-    selectionRef.current = null;
-    shouldRestoreSelectionRef.current = false;
-  }, [contentKey, isRootFocusDisplay, focusedNode?.id, rootTextareaId]);
 
   // Input refs
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -332,12 +313,6 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
   // Debounced Body Change
   const handleBodyChange = useCallback((val: string) => {
       if (textReadOnly) return;
-      const textarea = document.getElementById(rootTextareaId) as HTMLTextAreaElement | null;
-      if (textarea && !skipSelectionCaptureRef.current) {
-          selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
-          shouldRestoreSelectionRef.current = true;
-      }
-      skipSelectionCaptureRef.current = false;
       setBody(val);
       
       if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
@@ -352,12 +327,6 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
   // Debounced Raw Change (for Root)
   const handleRawChange = useCallback((val: string) => {
       if (textReadOnly) return;
-      const textarea = document.getElementById(rootTextareaId) as HTMLTextAreaElement | null;
-      if (textarea && !skipSelectionCaptureRef.current) {
-          selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
-          shouldRestoreSelectionRef.current = true;
-      }
-      skipSelectionCaptureRef.current = false;
       setBody(val);
       
       if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
@@ -371,12 +340,6 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
   const handleFocusedBodyChange = useCallback((val: string) => {
       if (textReadOnly) return;
       if (!focusedNode) return;
-      const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
-      if (textarea && !skipSelectionCaptureRef.current) {
-          selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
-          shouldRestoreSelectionRef.current = true;
-      }
-      skipSelectionCaptureRef.current = false;
       setFocusedBody(val);
 
       if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
@@ -388,29 +351,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
           dispatch({ type: 'UPDATE_CONTENT', payload: { id: focusedNode.id, content: newFullContent } });
           updateTimeoutRef.current = null;
       }, 700);
-  }, [focusedNode, dispatch, rootTextareaId, textReadOnly]);
-
-  const restoreSelection = useCallback(() => {
-      if (!shouldRestoreSelectionRef.current) return;
-      const textarea = document.getElementById(rootTextareaId) as HTMLTextAreaElement | null;
-      if (!textarea) return;
-      const sel = selectionRef.current;
-      if (!sel) return;
-      const len = textarea.value.length;
-      const start = Math.min(sel.start, len);
-      const end = Math.min(sel.end, len);
-      textarea.selectionStart = start;
-      textarea.selectionEnd = end;
-      shouldRestoreSelectionRef.current = false;
-  }, [rootTextareaId]);
-
-  // Restore selection after controlled updates (fix Ctrl+Z cursor jump)
-  useLayoutEffect(() => {
-      restoreSelection();
-      if (!shouldRestoreSelectionRef.current) return;
-      const raf = requestAnimationFrame(() => restoreSelection());
-      return () => cancelAnimationFrame(raf);
-  }, [body, focusedBody, restoreSelection]);
+  }, [focusedNode, dispatch, textReadOnly]);
 
   // Save immediately on blur
   const handleEditorBlur = useCallback(() => {
@@ -454,6 +395,8 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
     saveFile(contentToExport, filename, 'text/markdown');
   };
 
+  const rootDisplayContent = isRootFocusDisplay ? focusedBody : body;
+
   const handleNodeImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -463,7 +406,8 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
       if (text) {
           // Check if current node is empty
           // In Root mode, title is empty string, so we check body (rawContent)
-          const isNodeEmpty = !title.trim() && !body.trim();
+          const currentBody = isRoot ? rootDisplayContent : body;
+          const isNodeEmpty = !title.trim() && !currentBody.trim();
 
           // 1. Handle Title (Programmatic State Update is fine for Title)
           // Only for Node mode do we auto-set title from filename if empty
@@ -478,46 +422,29 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
               }
           }
 
-          // 2. Handle Body via execCommand to preserve Undo History
-          const textarea = document.getElementById(textareaId) as HTMLTextAreaElement;
-          
-          if (textarea) {
-                textarea.focus();
-                let insertText = text;
+          let insertText = text;
+          if (!isNodeEmpty) {
+              if (currentBody && !currentBody.endsWith('\n')) {
+                  insertText = '\n\n' + text;
+              } else if (currentBody && currentBody.endsWith('\n') && !currentBody.endsWith('\n\n')) {
+                  insertText = '\n' + text;
+              }
+          }
 
-                if (isNodeEmpty) {
-                    // Overwrite: Select all content first
-                    textarea.setSelectionRange(0, textarea.value.length);
-                } else {
-                    // Append: Move to end
-                    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-                    
-                    // Smart newline handling
-                    const currentVal = textarea.value;
-                    if (currentVal && !currentVal.endsWith('\n')) {
-                        insertText = '\n\n' + text;
-                    } else if (currentVal && currentVal.endsWith('\n') && !currentVal.endsWith('\n\n')) {
-                         insertText = '\n' + text;
-                    } else {
-                         insertText = text;
-                    }
-                }
-
-                // Execute Insert
-                const success = document.execCommand('insertText', false, insertText);
-                
-                if (!success) {
-                    // Fallback
-                    const newBody = isNodeEmpty ? text : (body + '\n\n' + text);
-                    setBody(newBody);
-                    
-                    // Critical Fix: For Root mode, use dispatch directly to avoid prepending # and > 
-                    if (isRoot) {
-                         dispatch({ type: 'UPDATE_CONTENT', payload: { id: contentKey, content: newBody } });
-                    } else {
-                         updateContent(title, desc, newBody);
-                    }
-                }
+          const editor = codeMirrorEditorRef.current;
+          if (editor) {
+              editor.insertText(insertText, { replaceAll: isNodeEmpty, atEnd: !isNodeEmpty });
+          } else {
+              const nextBody = isNodeEmpty ? text : currentBody + insertText;
+              if (isRoot) {
+                  if (isRootFocusDisplay) {
+                      handleFocusedBodyChange(nextBody);
+                  } else {
+                      handleRawChange(nextBody);
+                  }
+              } else {
+                  handleBodyChange(nextBody);
+              }
           }
       }
     } catch (err: any) {
@@ -528,136 +455,22 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
     }
   };
 
-  // --- SHORTCUTS & FORMATTING ---
-  const insertFormat = useCallback((
-    textarea: HTMLTextAreaElement, 
-    prefix: string, 
-    suffix: string, 
-    placeholder: string = 'text'
-  ) => {
-    if (textReadOnly) return;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const text = textarea.value;
-    const selected = text.substring(start, end);
-
-    let newText = '';
-    
-    // Check if already wrapped
-    // Need to safeguard against out of bounds
-    const pLen = prefix.length;
-    const sLen = suffix.length;
-    const before = start >= pLen ? text.substring(start - pLen, start) : '';
-    const after = end + sLen <= text.length ? text.substring(end, end + sLen) : '';
-
-    if (before === prefix && after === suffix) {
-        // Unwrap
-        newText = text.substring(0, start - pLen) + selected + text.substring(end + sLen);
-    } else {
-        // Wrap
-        const contentToWrap = selected || placeholder;
-        newText = text.substring(0, start) + prefix + contentToWrap + suffix + text.substring(end);
-    }
-
-    // Manual State update (Breaks native Undo for this specific action)
+  const editorFoldScopeKey = isRoot
+    ? `${contentKey}:${isRootFocusDisplay ? `focus-${focusedNode?.id || 'none'}` : 'global'}`
+    : contentKey;
+  const editorValue = isRoot ? rootDisplayContent : body;
+  const handleEditorChange = useCallback((nextContent: string) => {
     if (isRoot) {
-        // We cannot use handleRawChange directly here because it debounces and we need immediate update for selection restore
-        setBody(newText);
-        // We trigger the debounce logic manually
-        if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
-        updateTimeoutRef.current = setTimeout(() => {
-             dispatch({ type: 'UPDATE_CONTENT', payload: { id: contentKey, content: newText } });
-             updateTimeoutRef.current = null;
-        }, 700);
+      if (isRootFocusDisplay) {
+        handleFocusedBodyChange(nextContent);
+      } else {
+        handleRawChange(nextContent);
+      }
     } else {
-        setBody(newText);
-        if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
-        updateTimeoutRef.current = setTimeout(() => {
-             updateContent(titleRef.current, descRef.current, newText);
-             updateTimeoutRef.current = null;
-        }, 700);
+      handleBodyChange(nextContent);
     }
-    
-    // Restore selection
-    setTimeout(() => {
-        let newStart = start;
-        let newEnd = end;
-        
-        if (before === prefix && after === suffix) {
-             newStart = start - prefix.length;
-             newEnd = start - prefix.length + selected.length;
-        } else {
-             newStart = start + prefix.length;
-             newEnd = start + prefix.length + (selected ? selected.length : placeholder.length);
-        }
-        
-        if (textarea) {
-            textarea.focus();
-            textarea.selectionStart = newStart;
-            textarea.selectionEnd = newEnd;
-        }
-    }, 0);
-  }, [isRoot, contentKey, dispatch, updateContent, textReadOnly]);
+  }, [isRoot, isRootFocusDisplay, handleFocusedBodyChange, handleRawChange, handleBodyChange]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (textReadOnly) return;
-    // Only handle if Ctrl or Meta (Cmd) is pressed
-    if (!e.ctrlKey && !e.metaKey) return;
-
-    // Use currentTarget to ensure we get the wrapper or element we attached to, 
-    // but insertFormat needs the textarea. 
-    // e.target is the textarea in simple-code-editor.
-    const textarea = e.target as HTMLTextAreaElement;
-    if (textarea.tagName !== 'TEXTAREA') return;
-
-    const key = e.key.toLowerCase();
-    const isUndo = key === 'z' && !e.shiftKey && !e.altKey;
-    const isRedo = (key === 'z' && e.shiftKey) || key === 'y';
-    if (isUndo || isRedo) {
-        selectionRef.current = { start: textarea.selectionStart, end: textarea.selectionEnd };
-        shouldRestoreSelectionRef.current = true;
-        skipSelectionCaptureRef.current = true;
-    }
-    
-    switch(key) {
-        case 'b':
-            e.preventDefault();
-            insertFormat(textarea, '**', '**', 'bold');
-            break;
-        case 'i':
-            e.preventDefault();
-            insertFormat(textarea, '*', '*', 'italic');
-            break;
-        case 'u':
-            e.preventDefault();
-            insertFormat(textarea, '<u>', '</u>', 'underline');
-            break;
-        case 'k':
-            e.preventDefault();
-            // Simple link insertion
-            const start = textarea.selectionStart;
-            const end = textarea.selectionEnd;
-            const selected = textarea.value.substring(start, end);
-            if (selected) {
-                insertFormat(textarea, '[', '](url)');
-            } else {
-                insertFormat(textarea, '[', '](url)', 'text');
-            }
-            break;
-    }
-  }, [insertFormat, textReadOnly]);
-
-  // Memoized highlight function to prevent cursor jumping on re-render/undo
-  const highlightWithPrism = useCallback((code: string) => Prism.highlight(code, grammar, 'markdown'), []);
-
-  // Stable Style Object
-  const editorStyle = useMemo(() => ({ 
-        fontFamily: '"Menlo", "Monaco", "Courier New", monospace',
-        minHeight: '100%',
-        lineHeight: '1.625'
-  }), []);
-
-  const rootDisplayContent = isRootFocusDisplay ? focusedBody : body;
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const editorRootRef = useRef<HTMLDivElement>(null);
   const isPointerInsideRef = useRef(false);
@@ -670,12 +483,81 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
 
   const previewHotzoneRef = useRef<HTMLDivElement>(null);
   const previewOutlinePanelRef = useRef<HTMLDivElement>(null);
+  const previewFoldScopeKey = editorFoldScopeKey;
+  const [collapsedPreviewHeadingKeys, setCollapsedPreviewHeadingKeys] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     if (!isPreview || previewHeadings.length === 0) {
       setIsPreviewOutlineOpen(false);
     }
   }, [isPreview, previewHeadings.length]);
+
+  useEffect(() => {
+    setCollapsedPreviewHeadingKeys(new Set());
+  }, [previewFoldScopeKey, previewMarkdown]);
+
+  useLayoutEffect(() => {
+    if (!isPreview) return;
+    const previewArticle = previewScrollRef.current?.querySelector('.markdown-preview');
+    if (!previewArticle) return;
+
+    previewArticle.querySelectorAll('.markdown-fold-toggle').forEach((button) => button.remove());
+    previewArticle.querySelectorAll('.markdown-fold-heading').forEach((heading) => {
+      heading.classList.remove('markdown-fold-heading');
+      heading.removeAttribute('data-markdown-fold-key');
+    });
+    previewArticle.querySelectorAll('.markdown-fold-hidden').forEach((element) => {
+      element.classList.remove('markdown-fold-hidden');
+      element.removeAttribute('data-markdown-fold-hidden');
+    });
+
+    const headings = Array.from(previewArticle.querySelectorAll(PREVIEW_HEADING_SELECTOR)) as HTMLElement[];
+
+    headings.forEach((heading, index) => {
+      const foldKey = `${previewFoldScopeKey}:${index}`;
+      const isCollapsed = collapsedPreviewHeadingKeys.has(foldKey);
+      heading.classList.add('markdown-fold-heading');
+      heading.dataset.markdownFoldKey = foldKey;
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'markdown-fold-toggle';
+      button.dataset.collapsed = String(isCollapsed);
+      button.setAttribute('aria-label', isCollapsed ? '展开当前标题内容' : '折叠当前标题内容');
+      button.setAttribute('title', isCollapsed ? '展开' : '折叠');
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setCollapsedPreviewHeadingKeys((current) => {
+          const next = new Set(current);
+          if (next.has(foldKey)) {
+            next.delete(foldKey);
+          } else {
+            next.add(foldKey);
+          }
+          return next;
+        });
+      });
+      button.addEventListener('dblclick', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      heading.insertBefore(button, heading.firstChild);
+
+      if (!isCollapsed) return;
+
+      const headingLevel = getHeadingLevel(heading);
+      let sibling = heading.nextElementSibling as HTMLElement | null;
+      while (sibling) {
+        if (sibling.matches(PREVIEW_HEADING_SELECTOR) && getHeadingLevel(sibling) <= headingLevel) {
+          break;
+        }
+        sibling.classList.add('markdown-fold-hidden');
+        sibling.dataset.markdownFoldHidden = 'true';
+        sibling = sibling.nextElementSibling as HTMLElement | null;
+      }
+    });
+  }, [isPreview, previewFoldScopeKey, previewMarkdown, collapsedPreviewHeadingKeys]);
 
   const handlePreviewHotzoneLeave = (e: React.MouseEvent<HTMLDivElement>) => {
     const next = e.relatedTarget as Node | null;
@@ -692,10 +574,15 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
   const handleOutlineJump = useCallback((domIndex: number) => {
     const container = previewScrollRef.current;
     if (!container) return;
-    const headingEls = container.querySelectorAll('.markdown-preview h1, .markdown-preview h2, .markdown-preview h3, .markdown-preview h4, .markdown-preview h5, .markdown-preview h6');
-    const target = headingEls[domIndex] as HTMLElement | undefined;
+    const previewArticle = container.querySelector('.markdown-preview');
+    if (!previewArticle) return;
+    const headingEls = Array.from(previewArticle.querySelectorAll(PREVIEW_HEADING_SELECTOR)) as HTMLElement[];
+    const target = headingEls[domIndex];
     if (!target) return;
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const visibleTarget = target.classList.contains('markdown-fold-hidden')
+      ? [...headingEls].slice(0, domIndex).reverse().find((heading) => !heading.classList.contains('markdown-fold-hidden'))
+      : target;
+    (visibleTarget || target).scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
 
   useEffect(() => {
@@ -819,28 +706,22 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
                             className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert"
                             onDoubleClick={handlePreviewDoubleClick}
                         >
-                            <Markdown rehypePlugins={[rehypeRaw]}>{rootDisplayContent || '*No content*'}</Markdown>
+                            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{rootDisplayContent || '*No content*'}</Markdown>
                         </article>
                     </div>
                 </div>
             ) : (
                 <div className="w-full min-h-full p-8 mx-auto max-w-4xl">
-                    <div className="prism-editor-wrapper h-full">
-                        <Editor
-                            key={isRootFocusDisplay ? `root-focus-${focusedNode?.id || 'none'}` : 'root-global'}
-                            value={rootDisplayContent}
-                            textareaId={rootTextareaId}
-                            onValueChange={isRootFocusDisplay ? handleFocusedBodyChange : handleRawChange}
-                            onBlur={handleEditorBlur}
-                            highlight={highlightWithPrism}
-                            padding={0}
-                            onKeyDown={handleKeyDown}
-                            readOnly={textReadOnly}
-                            className="font-mono text-lg text-gray-800 dark:text-gray-200 min-h-[400px]"
-                            textareaClassName={`focus:outline-none selection:bg-[color:var(--flow-accent-soft)] selection:text-[color:var(--flow-accent-strong)] ${textReadOnly ? 'cursor-default' : ''}`}
-                            style={editorStyle}
-                        />
-                    </div>
+                    <MarkdownCodeMirrorEditor
+                        key={editorFoldScopeKey}
+                        ref={codeMirrorEditorRef}
+                        value={editorValue}
+                        foldScopeKey={editorFoldScopeKey}
+                        onChange={handleEditorChange}
+                        onBlur={handleEditorBlur}
+                        readOnly={textReadOnly}
+                        className="h-full min-h-[400px]"
+                    />
                 </div>
             )
         ) : (
@@ -945,25 +826,20 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
                             className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert"
                             onDoubleClick={handlePreviewDoubleClick}
                         >
-                            <Markdown rehypePlugins={[rehypeRaw]}>{body || '*No content*'}</Markdown>
+                            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{body || '*No content*'}</Markdown>
                         </article>
                     </div>
                 ) : (
-                    <div className="flex-1 prism-editor-wrapper">
-                         <Editor
-                            value={body}
-                            textareaId={textareaId}
-                            onValueChange={handleBodyChange}
-                            onBlur={handleEditorBlur}
-                            highlight={highlightWithPrism}
-                            padding={0}
-                            onKeyDown={handleKeyDown}
-                            readOnly={textReadOnly}
-                            className="font-mono text-lg text-gray-800 dark:text-gray-200 min-h-[400px]"
-                            textareaClassName={`focus:outline-none selection:bg-[color:var(--flow-accent-soft)] selection:text-[color:var(--flow-accent-strong)] ${textReadOnly ? 'cursor-default' : ''}`}
-                            style={editorStyle}
-                        />
-                    </div>
+                    <MarkdownCodeMirrorEditor
+                        key={editorFoldScopeKey}
+                        ref={codeMirrorEditorRef}
+                        value={editorValue}
+                        foldScopeKey={editorFoldScopeKey}
+                        onChange={handleEditorChange}
+                        onBlur={handleEditorBlur}
+                        readOnly={textReadOnly}
+                        className="flex-1 min-h-[400px]"
+                    />
                 )}
             </div>
         )}

@@ -26,6 +26,7 @@ body { font-family: 'Inter', sans-serif; }
 
 /* Ensure underline tags are visible */
 .prose u, u { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.prose del, del { text-decoration: line-through; text-decoration-thickness: 1.5px; text-decoration-color: currentColor; opacity: 0.78; }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -36,49 +37,116 @@ body { font-family: 'Inter', sans-serif; }
 .dark ::-webkit-scrollbar-thumb { background: #3f3f46; }
 .dark ::-webkit-scrollbar-thumb:hover { background: #52525b; }
 
-/* Prism / Editor Syntax Highlighting */
-/* FIXED: Removed font-weight: bold to prevent cursor misalignment */
-.token.heading { font-weight: normal; color: var(--color-accent); }
-.token.bold { font-weight: normal; color: var(--color-fg-default); background-color: rgba(0,0,0,0.05); }
-.dark .token.bold { background-color: rgba(255,255,255,0.1); }
-
-.token.italic { font-style: italic; }
-.token.underline { text-decoration: underline; }
-.token.strike { text-decoration: line-through; opacity: 0.7; }
-.token.list { color: var(--color-fg-muted); }
-.token.quote { color: var(--color-fg-muted); font-style: italic; }
-.token.link { color: var(--color-accent); text-decoration: underline; }
-.token.url { color: var(--color-fg-muted); }
-.token.code {
-  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-  background: var(--color-bg-code);
-  border-radius: 3px;
-  font-size: 0.9em;
+/* CodeMirror Markdown editor */
+.markdown-codemirror-editor {
+  color: var(--color-fg-default);
 }
 
-/* Editor Overrides */
-.prism-editor-wrapper textarea,
-.prism-editor-wrapper pre {
+.markdown-codemirror-editor .cm-editor {
+  height: 100%;
+  min-height: 400px;
+  background: transparent;
+  color: var(--color-fg-default);
+  font-family: "Menlo", "Monaco", "Courier New", monospace;
+  font-size: 1.125rem;
+}
+
+.markdown-codemirror-editor .cm-focused {
   outline: none !important;
 }
 
-/* Fix alignment issues between textarea and pre */
-/* Use standard word-break only */
-.prism-editor-wrapper textarea,
-.prism-editor-wrapper pre {
-  word-break: break-all !important;
-  white-space: pre-wrap !important;
-  overflow-wrap: normal !important;
-  line-break: auto !important;
-  font-variant-ligatures: none !important;
+.markdown-codemirror-editor .cm-scroller {
+  font-family: inherit;
+  line-height: 1.625;
 }
 
-/* Keep editor highlight layer typography aligned with textarea */
-.prism-editor-wrapper .token.code {
-  font-size: inherit;
-  background: none;
+.markdown-codemirror-editor .cm-content {
+  min-height: 400px;
   padding: 0;
-  border-radius: 0;
+  caret-color: var(--color-fg-default);
+}
+
+.markdown-codemirror-editor .cm-line {
+  padding: 0;
+  word-break: break-all;
+  line-break: auto;
+}
+
+.markdown-codemirror-editor .cm-selectionBackground,
+.markdown-codemirror-editor.cm-focused .cm-selectionBackground,
+.markdown-codemirror-editor .cm-focused .cm-selectionBackground {
+  background: var(--flow-accent-soft) !important;
+}
+
+.markdown-codemirror-editor .cm-format-strike {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: currentColor;
+  opacity: 0.78;
+}
+
+.markdown-codemirror-editor .cm-format-underline {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.markdown-codemirror-editor .cm-markdown-horizontal-rule {
+  color: var(--color-fg-default);
+}
+
+.cm-markdown-fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  min-width: 1rem;
+  height: 1.625em;
+  margin-right: 0.35rem;
+  border-radius: 4px;
+  color: var(--color-fg-muted);
+  vertical-align: top;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.cm-markdown-fold-toggle:hover {
+  color: var(--color-accent);
+  background-color: var(--color-bg-code);
+}
+
+.cm-markdown-fold-toggle::before {
+  content: '';
+  display: block;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.cm-markdown-fold-toggle[data-collapsed="true"]::before {
+  transform: rotate(0deg);
+}
+
+.cm-markdown-fold-placeholder {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin: 0.1rem 0 0.1rem 1.35rem;
+  padding: 0 0.45rem;
+  border-radius: 4px;
+  color: var(--color-fg-muted);
+  background: var(--color-bg-code);
+  font-style: italic;
+  line-height: 1.45;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cm-markdown-fold-placeholder:hover {
+  color: var(--color-accent);
 }
 
 /* Ensure Preview mode behaves consistently (Justify is fine here) */
@@ -90,9 +158,53 @@ body { font-family: 'Inter', sans-serif; }
 
 /* Markdown preview: tune heading scale to match editor visual rhythm */
 .markdown-preview.prose :is(h1, h2, h3, h4, h5, h6) {
+  position: relative;
   line-height: 1.3;
   margin-top: 0.6em !important;
   margin-bottom: 0.2em !important;
+}
+
+.markdown-preview.prose :is(h1, h2, h3, h4, h5, h6).markdown-fold-heading {
+  padding-left: 1.25rem;
+}
+
+.markdown-fold-toggle {
+  position: absolute;
+  left: 0;
+  top: 0.14em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 4px;
+  color: var(--color-fg-muted);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.markdown-fold-toggle:hover {
+  color: var(--color-accent);
+  background-color: var(--color-bg-code);
+}
+
+.markdown-fold-toggle::before {
+  content: '';
+  display: block;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.markdown-fold-toggle[data-collapsed="true"]::before {
+  transform: rotate(0deg);
+}
+
+.markdown-fold-hidden {
+  display: none !important;
 }
 
 .markdown-preview.prose {

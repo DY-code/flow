@@ -13,13 +13,17 @@
     "pwa:start": "npm run build && npm run pwa:serve"
   },
   "dependencies": {
-    "prismjs": "1.29.0",
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/language": "^6.12.3",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "9",
-    "react-simple-code-editor": "0.14.1",
     "recharts": "^3.7.0",
-    "rehype-raw": "7"
+    "rehype-raw": "7",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.19",

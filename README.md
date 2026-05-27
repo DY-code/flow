@@ -133,6 +133,8 @@ npm run dev
 
 - 直接编辑 Markdown 内容
 - 在编辑和预览之间切换
+- 编辑模式中可点击标题左侧箭头折叠 / 展开 Markdown 标题块；折叠内容以不可编辑的显示层占位提示呈现，状态仅当前会话保留
+- 预览模式中可点击标题左侧箭头，按 Markdown 标题折叠 / 展开内容块
 - 导出当前节点的 Markdown
 - 导入外部 `Markdown` / `txt` 内容追加到节点正文
 
@@ -250,6 +252,7 @@ Flow 支持多种查看方式，适合不同设备和工作阶段。
 | `Ctrl/Command + B` | 插入粗体标记 |
 | `Ctrl/Command + I` | 插入斜体标记 |
 | `Ctrl/Command + U` | 插入下划线标记 |
+| `Ctrl/Command + Shift + X` | 插入删除线标记 |
 | `Ctrl/Command + K` | 插入链接标记 |
 
 ## GitHub 备份推送
