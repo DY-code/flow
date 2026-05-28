@@ -94,8 +94,8 @@ body { font-family: 'Inter', sans-serif; }
 
 .markdown-codemirror-editor .cm-markdown-horizontal-rule,
 .markdown-codemirror-editor .cm-markdown-horizontal-rule *,
-.markdown-codemirror-editor .cm-markdown-single-dash,
-.markdown-codemirror-editor .cm-markdown-single-dash *,
+.markdown-codemirror-editor .cm-markdown-single-symbol,
+.markdown-codemirror-editor .cm-markdown-single-symbol *,
 .markdown-codemirror-editor .cm-markdown-list-marker,
 .markdown-codemirror-editor .cm-markdown-list-marker * {
   color: var(--color-fg-default) !important;

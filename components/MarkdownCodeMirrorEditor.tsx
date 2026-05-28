@@ -243,15 +243,15 @@ const buildFormatStyleDecorations = (state: EditorState): DecorationSet => {
 
   for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
     const line = state.doc.line(lineNumber);
-    if (/^\s{0,3}-{3,}\s*$/.test(line.text)) {
+    if (/^\s{0,3}(?:-{3,}|\*{3,})\s*$/.test(line.text)) {
       ranges.push(Decoration.mark({ class: 'cm-markdown-horizontal-rule' }).range(line.from, line.to));
     }
 
-    if (/^\s{0,3}-\s*$/.test(line.text)) {
-      ranges.push(Decoration.mark({ class: 'cm-markdown-single-dash' }).range(line.from, line.to));
+    if (/^\s{0,3}[-+*]\s*$/.test(line.text)) {
+      ranges.push(Decoration.mark({ class: 'cm-markdown-single-symbol' }).range(line.from, line.to));
     }
 
-    const listMarkerMatch = line.text.match(/^(\s*)-\s+/);
+    const listMarkerMatch = line.text.match(/^(\s*)[-+*]\s+/);
     if (listMarkerMatch) {
       const markerFrom = line.from + listMarkerMatch[1].length;
       const markerTo = markerFrom + listMarkerMatch[0].length - listMarkerMatch[1].length;
