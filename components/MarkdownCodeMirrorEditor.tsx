@@ -4,15 +4,16 @@ import React, {
   useImperativeHandle,
   useRef,
 } from 'react';
-import { history, historyKeymap, defaultKeymap } from '@codemirror/commands';
+import { history, historyKeymap, defaultKeymap, indentLess, indentMore } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { defaultHighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import {
   Annotation,
   Compartment,
   EditorSelection,
   EditorState,
   Extension,
+  Prec,
   Range,
   StateEffect,
   StateField,
@@ -242,8 +243,19 @@ const buildFormatStyleDecorations = (state: EditorState): DecorationSet => {
 
   for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
     const line = state.doc.line(lineNumber);
-    if (/^\s{0,3}---\s*$/.test(line.text)) {
+    if (/^\s{0,3}-{3,}\s*$/.test(line.text)) {
       ranges.push(Decoration.mark({ class: 'cm-markdown-horizontal-rule' }).range(line.from, line.to));
+    }
+
+    if (/^\s{0,3}-\s*$/.test(line.text)) {
+      ranges.push(Decoration.mark({ class: 'cm-markdown-single-dash' }).range(line.from, line.to));
+    }
+
+    const listMarkerMatch = line.text.match(/^(\s*)-\s+/);
+    if (listMarkerMatch) {
+      const markerFrom = line.from + listMarkerMatch[1].length;
+      const markerTo = markerFrom + listMarkerMatch[0].length - listMarkerMatch[1].length;
+      ranges.push(Decoration.mark({ class: 'cm-markdown-list-marker' }).range(markerFrom, markerTo));
     }
   }
 
@@ -361,6 +373,8 @@ const wrapSelection = (
 };
 
 const createFormatKeymap = (): Extension => keymap.of([
+  { key: 'Tab', preventDefault: true, run: indentMore },
+  { key: 'Shift-Tab', preventDefault: true, run: indentLess },
   { key: 'Mod-b', preventDefault: true, run: (view) => wrapSelection(view, '**', '**', 'bold') },
   { key: 'Mod-i', preventDefault: true, run: (view) => wrapSelection(view, '*', '*', 'italic') },
   { key: 'Mod-u', preventDefault: true, run: (view) => wrapSelection(view, '<u>', '</u>', 'underline') },
@@ -433,9 +447,10 @@ const MarkdownCodeMirrorEditor = forwardRef<MarkdownCodeMirrorEditorHandle, Mark
       extensions: [
         history(),
         markdown(),
+        indentUnit.of('  '),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         EditorView.lineWrapping,
-        markdownFormatStyleField,
+        Prec.high(markdownFormatStyleField),
         createFormatKeymap(),
         keymap.of([...historyKeymap, ...defaultKeymap]),
         markdownFoldExtensions(foldScopeKey),

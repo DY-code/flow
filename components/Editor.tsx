@@ -449,7 +449,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
       }
     } catch (err: any) {
       console.error('Failed to import text file:', err);
-      alert(err?.message || 'Failed to import file.');
+      alert(err?.message || '导入文件失败。');
     } finally {
       e.target.value = ''; // Reset input
     }
@@ -720,7 +720,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
                         onChange={handleEditorChange}
                         onBlur={handleEditorBlur}
                         readOnly={textReadOnly}
-                        className="h-full min-h-[400px]"
+                        className="min-h-[400px]"
                     />
                 </div>
             )
@@ -838,7 +838,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
                         onChange={handleEditorChange}
                         onBlur={handleEditorBlur}
                         readOnly={textReadOnly}
-                        className="flex-1 min-h-[400px]"
+                        className="min-h-[400px]"
                     />
                 )}
             </div>

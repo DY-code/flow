@@ -43,7 +43,7 @@ body { font-family: 'Inter', sans-serif; }
 }
 
 .markdown-codemirror-editor .cm-editor {
-  height: 100%;
+  height: auto;
   min-height: 400px;
   background: transparent;
   color: var(--color-fg-default);
@@ -58,6 +58,7 @@ body { font-family: 'Inter', sans-serif; }
 .markdown-codemirror-editor .cm-scroller {
   font-family: inherit;
   line-height: 1.625;
+  overflow: visible;
 }
 
 .markdown-codemirror-editor .cm-content {
@@ -91,8 +92,13 @@ body { font-family: 'Inter', sans-serif; }
   text-underline-offset: 2px;
 }
 
-.markdown-codemirror-editor .cm-markdown-horizontal-rule {
-  color: var(--color-fg-default);
+.markdown-codemirror-editor .cm-markdown-horizontal-rule,
+.markdown-codemirror-editor .cm-markdown-horizontal-rule *,
+.markdown-codemirror-editor .cm-markdown-single-dash,
+.markdown-codemirror-editor .cm-markdown-single-dash *,
+.markdown-codemirror-editor .cm-markdown-list-marker,
+.markdown-codemirror-editor .cm-markdown-list-marker * {
+  color: var(--color-fg-default) !important;
 }
 
 .cm-markdown-fold-toggle {

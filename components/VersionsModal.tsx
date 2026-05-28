@@ -70,7 +70,7 @@ const VersionsModal: React.FC<VersionsModalProps> = ({
   });
 
   const handleRollback = (id: string) => {
-    if (window.confirm('Rollback to this saved version? Current changes will be replaced.')) {
+    if (window.confirm('确定回滚到这个已保存版本吗？当前修改将被替换。')) {
       dispatch({ type: 'ROLLBACK_VERSION', payload: id });
       dispatch({ type: 'TOGGLE_VERSIONS', payload: false });
     }
@@ -145,7 +145,7 @@ const VersionsModal: React.FC<VersionsModalProps> = ({
     const confirmed = window.confirm([
       '确定回溯到这个 GitHub 历史版本吗？',
       '',
-      `项目：${selectedGitVersion.summary.projectName || 'Untitled Project'}`,
+      `项目：${selectedGitVersion.summary.projectName || '未命名项目'}`,
       `提交：${selectedGitVersion.commitHash.slice(0, 7)}`,
       '',
       '这只会覆盖当前应用状态和浏览器缓存，不会修改磁盘 JSON 文件。'

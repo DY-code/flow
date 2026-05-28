@@ -108,11 +108,11 @@ const buildImportConfirmationMessage = ({
 }) => [
   '确定执行节点导入吗？',
   '',
-  `源节点：${sourceNode.text || 'Untitled'}`,
+  `源节点：${sourceNode.text || '未命名'}`,
   `子节点数量：${descendantCount}`,
-  `源项目：${sourceProjectName || 'Untitled Project'}`,
+  `源项目：${sourceProjectName || '未命名项目'}`,
   `源路径：${sourceProjectPath}`,
-  `目标项目：${targetProjectName || 'Untitled Project'}`,
+  `目标项目：${targetProjectName || '未命名项目'}`,
   `目标路径：${targetProjectPath}`,
   '导入位置：目标项目根级节点末尾',
   '',
@@ -134,10 +134,10 @@ const buildProjectAsNodeImportConfirmationMessage = ({
 }) => [
   '确定将项目导入为节点吗？',
   '',
-  `源项目：${sourceProjectName}`,
+  `源项目：${sourceProjectName || '未命名项目'}`,
   `源文件：${sourceFilename}`,
   `源节点数量：${sourceNodeCount}`,
-  `目标项目：${targetProjectName || 'Untitled Project'}`,
+  `目标项目：${targetProjectName || '未命名项目'}`,
   `目标路径：${getProjectPathLabel(targetProjectPath)}`,
   '导入位置：当前项目根级节点末尾',
   '',
@@ -849,7 +849,7 @@ const ResearchLogApp: React.FC = () => {
       const text = await readTextFile(file);
       const json = JSON.parse(text);
       if (isProjectData(json)) {
-        if(window.confirm('Overwrite current project?')) {
+        if(window.confirm('确定覆盖当前项目吗？')) {
           dispatch({ type: 'IMPORT_DATA', payload: { data: json, projectPath: null } });
           if (handle) {
             const nextRecentImports = await saveRecentImportedProject({
@@ -861,10 +861,10 @@ const ResearchLogApp: React.FC = () => {
           }
         }
       } else {
-        alert('Invalid file format.');
+        alert('文件格式无效。');
       }
     } catch (err: any) {
-      alert(err?.message || 'Failed to parse JSON.');
+      alert(err?.message || '解析 JSON 失败。');
     }
   };
 
@@ -892,7 +892,7 @@ const ResearchLogApp: React.FC = () => {
       await importProjectJsonFile(file, handle);
     } catch (error: any) {
       if (error?.name === 'AbortError') return;
-      alert(error?.message || 'Failed to import JSON.');
+      alert(error?.message || '导入 JSON 失败。');
     }
   };
 
@@ -905,7 +905,7 @@ const ResearchLogApp: React.FC = () => {
       const file = await readRecentImportedProjectFile(entry);
       await importProjectJsonFile(file, entry.handle);
     } catch (error: any) {
-      alert(error?.message || '无法读取最近导入项目，请重新通过 Import JSON 选择文件。');
+      alert(error?.message || '无法读取最近导入项目，请重新通过“导入 JSON”选择文件。');
     } finally {
       setIsOpeningRecentImportedProjectId(null);
     }
@@ -920,13 +920,13 @@ const ResearchLogApp: React.FC = () => {
       const sourceProject = JSON.parse(text);
 
       if (!isProjectData(sourceProject)) {
-        alert('Invalid file format.');
+        alert('文件格式无效。');
         return;
       }
 
       const parentTitle = (sourceProject.projectName || '').trim()
         || getFilenameWithoutJsonExtension(file.name).trim()
-        || 'Imported Project';
+        || '导入项目';
       const confirmed = window.confirm(buildProjectAsNodeImportConfirmationMessage({
         sourceProjectName: parentTitle,
         sourceFilename: file.name,
@@ -1094,26 +1094,26 @@ const ResearchLogApp: React.FC = () => {
     try {
       files = await listProjectExportDirectoryFiles(pickerId, `.${extension}`);
     } catch (error: any) {
-      alert(error?.message || '读取导出目录失败。请在 Export 菜单中重新设置 Set Export Folder。');
+      alert(error?.message || '读取导出目录失败。请在“导出”菜单中重新设置导出目录。');
       return null;
     }
 
     if (!files) {
       setHasProjectExportFolder(false);
-      alert('请先在 Export 菜单中点击 Set Export Folder 设置导出目录。');
+      alert('请先在“导出”菜单中点击“设置导出目录”。');
       return null;
     }
 
     setHasProjectExportFolder(true);
 
     if (files.length === 0) {
-      alert(`当前 Export Folder 中没有可覆盖的 ${label} 文件。`);
+      alert(`当前导出目录中没有可覆盖的 ${label} 文件。`);
       return null;
     }
 
     return requestOverwriteTargetFile({
       title: `选择覆盖的 ${label} 文件`,
-      description: `从当前项目 Export Folder 中选择要覆盖的 ${label} 文件。`,
+      description: `从当前项目导出目录中选择要覆盖的 ${label} 文件。`,
       files
     });
   };
@@ -1198,7 +1198,7 @@ const ResearchLogApp: React.FC = () => {
       });
       setIsGlobalInteractionMenuOpen(false);
       await loadRecentProjects();
-      alert(`已导入到global（${target.label}）：${sourceNode.text || 'Untitled'}。请按需手动保存${target.label}。`);
+      alert(`已导入到global（${target.label}）：${sourceNode.text || '未命名'}。请按需手动保存${target.label}。`);
     } catch (error: any) {
       alert(error?.message || '导入到global失败。');
     } finally {
@@ -1262,7 +1262,7 @@ const ResearchLogApp: React.FC = () => {
       setTaskPlanImportData(null);
       setSelectedTaskPlanNodeId(null);
       await loadRecentProjects();
-      alert(`已从global（${target.label}）导入当前项目：${sourceNode.text || 'Untitled'}。请按需手动保存当前项目。`);
+      alert(`已从global（${target.label}）导入当前项目：${sourceNode.text || '未命名'}。请按需手动保存当前项目。`);
     } catch (error: any) {
       alert(error?.message || '从global导入失败。');
     } finally {
@@ -1300,7 +1300,7 @@ const ResearchLogApp: React.FC = () => {
   const handleExportJson = async () => {
     const data: ProjectData = buildProjectData();
     const confirmed = window.confirm(
-      `当前项目名为：${state.projectName || 'Untitled Project'}\n\n覆盖已有项目时，请注意选择正确的文件。`
+      `当前项目名为：${state.projectName || '未命名项目'}\n\n覆盖已有项目时，请注意选择正确的文件。`
     );
     if (!confirmed) {
       setIsExportMenuOpen(false);
@@ -1322,7 +1322,7 @@ const ResearchLogApp: React.FC = () => {
   const handleExportMarkdown = async () => {
     const data: ProjectData = buildProjectData();
     const confirmed = window.confirm(
-      `当前项目名为：${state.projectName || 'Untitled Project'}\n\n覆盖已有项目时，请注意选择正确的文件。`
+      `当前项目名为：${state.projectName || '未命名项目'}\n\n覆盖已有项目时，请注意选择正确的文件。`
     );
     if (!confirmed) {
       setIsExportMenuOpen(false);
@@ -1518,7 +1518,7 @@ const ResearchLogApp: React.FC = () => {
     }
 
     // Force Prompt
-    if (window.confirm("⚠️ Backup Recommended\n\nDo you want to download a JSON backup of the current project before overwriting it?")) {
+    if (window.confirm('建议先备份\n\n覆盖当前项目之前，是否先下载一份当前项目的 JSON 备份？')) {
         handleExportJson().then(() => {
              // Delay to allow download to initiate before action if legacy, 
              // but with await it should be relatively safe. 
@@ -1529,7 +1529,7 @@ const ResearchLogApp: React.FC = () => {
         });
     } else {
         // If they cancelled the download prompt, confirm they really want to proceed without backup
-        if (window.confirm("⚠️ Overwrite Warning\n\nThe current project will be replaced and unsaved changes lost. Are you sure you want to proceed without a backup?")) {
+        if (window.confirm('覆盖警告\n\n当前项目将被替换，未保存修改会丢失。确定不备份并继续吗？')) {
             action();
         }
     }
