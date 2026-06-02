@@ -31,6 +31,7 @@ import {
     listProjectExportDirectoryFiles,
     loadRecentImportedProjects,
     readRecentImportedProjectFile,
+    removeRecentImportedProject,
     saveRecentImportedProject,
     writeFileHandle,
     selectProjectExportDirectory
@@ -911,6 +912,14 @@ const ResearchLogApp: React.FC = () => {
     }
   };
 
+  const handleRemoveRecentImportedProject = async (entry: RecentImportedProjectEntry) => {
+    const confirmed = window.confirm('确定从最近项目中移除这个项目吗？不会删除磁盘文件。');
+    if (!confirmed) return;
+
+    const nextRecentImports = await removeRecentImportedProject(entry.id);
+    setRecentImportedProjects(nextRecentImports);
+  };
+
   const handleImportProjectAsNode = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1666,25 +1675,40 @@ const ResearchLogApp: React.FC = () => {
                                     <div className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">还没有通过 Import JSON 打开的本地项目。</div>
                                 ) : (
                                     recentImportedProjects.map((project) => (
-                                        <button
+                                        <div
                                             key={project.id}
-                                            onClick={() => void handleRecentImportedProjectClick(project)}
-                                            disabled={isOpeningRecentImportedProjectId !== null}
-                                            className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-[color:var(--flow-accent-soft)] disabled:cursor-wait disabled:opacity-70 dark:hover:bg-zinc-800"
-                                            title={`${project.projectName}\n${project.fileName}`}
+                                            className="group flex w-full items-stretch transition-colors hover:bg-[color:var(--flow-accent-soft)] dark:hover:bg-zinc-800"
                                         >
-                                            <div className="min-w-0">
-                                                <div className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
-                                                    {project.projectName || project.fileName}
+                                            <button
+                                                type="button"
+                                                onClick={() => void handleRecentImportedProjectClick(project)}
+                                                disabled={isOpeningRecentImportedProjectId !== null}
+                                                className="flex min-w-0 flex-1 items-start justify-between gap-3 px-4 py-3 text-left disabled:cursor-wait disabled:opacity-70"
+                                                title={`${project.projectName}\n${project.fileName}`}
+                                            >
+                                                <div className="min-w-0">
+                                                    <div className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                                                        {project.projectName || project.fileName}
+                                                    </div>
+                                                    <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                                                        {project.fileName}
+                                                    </div>
                                                 </div>
-                                                <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
-                                                    {project.fileName}
+                                                <div className="shrink-0 text-right text-[11px] text-gray-400 dark:text-gray-500">
+                                                    {isOpeningRecentImportedProjectId === project.id ? '打开中...' : formatCompactDateTime(project.importedAt)}
                                                 </div>
-                                            </div>
-                                            <div className="shrink-0 text-right text-[11px] text-gray-400 dark:text-gray-500">
-                                                {isOpeningRecentImportedProjectId === project.id ? '打开中...' : formatCompactDateTime(project.importedAt)}
-                                            </div>
-                                        </button>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => void handleRemoveRecentImportedProject(project)}
+                                                disabled={isOpeningRecentImportedProjectId !== null}
+                                                className="flex w-10 shrink-0 items-center justify-center text-lg leading-none text-gray-300 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-wait disabled:opacity-40 dark:text-zinc-600 dark:hover:bg-red-950/30 dark:hover:text-red-300"
+                                                title="从最近项目中移除"
+                                                aria-label={`从最近项目中移除 ${project.projectName || project.fileName}`}
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
                                     ))
                                 )}
 

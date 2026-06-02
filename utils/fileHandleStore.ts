@@ -291,6 +291,29 @@ export const saveRecentImportedProject = async ({
   }
 };
 
+export const removeRecentImportedProject = async (id: string): Promise<RecentImportedProjectEntry[]> => {
+  try {
+    const currentEntries = await loadRecentImportedProjects(50);
+    const nextEntries = currentEntries.filter((entry) => entry.id !== id);
+
+    const db = await openFileHandleDb();
+    if (!db) return nextEntries.slice(0, MAX_RECENT_IMPORTED_PROJECTS);
+
+    try {
+      const transaction = db.transaction(RECENT_IMPORT_PROJECT_STORE_NAME, 'readwrite');
+      transaction.objectStore(RECENT_IMPORT_PROJECT_STORE_NAME).delete(id);
+      await waitForTransaction(transaction);
+    } finally {
+      db.close();
+    }
+
+    return nextEntries.slice(0, MAX_RECENT_IMPORTED_PROJECTS);
+  } catch (error) {
+    console.warn('Failed to remove recent imported project:', error);
+    return loadRecentImportedProjects();
+  }
+};
+
 export const readRecentImportedProjectFile = async (entry: RecentImportedProjectEntry): Promise<File> => {
   if (!isFileHandle(entry.handle)) {
     throw new Error('最近导入记录已失效，请重新选择文件。');
