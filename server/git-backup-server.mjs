@@ -75,6 +75,12 @@ const formatDateString = (date = new Date()) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+const resolveTodayTodoDate = (projectData) => {
+  const projectName = String(projectData?.projectName || '').trim();
+  const match = projectName.match(/今日待办\s+(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : formatDateString();
+};
+
 const buildNodeContent = (title, desc = '', body = '') => {
   const lines = [`# ${title}`, desc ? `> ${desc}` : '', body || ''];
   return lines.join('\n');
@@ -680,7 +686,7 @@ const syncTodayTodos = async ({ todayTodoData }) => {
     : await readProjectFile(TODAY_TODO_PROJECT_PATH);
   const savedTaskPlan = await readProjectFile(TASK_PLAN_PROJECT_PATH);
   const nowIso = new Date().toISOString();
-  const today = formatDateString();
+  const today = resolveTodayTodoDate(savedTodayTodo.projectData);
   const todayTodoNodes = savedTodayTodo.projectData.nodes.map((node) => ({ ...node }));
   const todayTodoContentMap = { ...savedTodayTodo.projectData.contentMap };
   let taskPlanNodes = savedTaskPlan.projectData.nodes.map((node) => ({ ...node }));

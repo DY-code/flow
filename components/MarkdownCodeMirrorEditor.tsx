@@ -4,9 +4,9 @@ import React, {
   useImperativeHandle,
   useRef,
 } from 'react';
-import { history, historyKeymap, defaultKeymap, indentLess, indentMore } from '@codemirror/commands';
-import { markdown } from '@codemirror/lang-markdown';
-import { defaultHighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
+import { history, historyKeymap, defaultKeymap, indentLess, indentMore, insertNewlineAndIndent } from '@codemirror/commands';
+import { deleteMarkupBackward, insertNewlineContinueMarkup, markdown } from '@codemirror/lang-markdown';
+import { indentUnit } from '@codemirror/language';
 import {
   Annotation,
   Compartment,
@@ -251,7 +251,7 @@ const buildFormatStyleDecorations = (state: EditorState): DecorationSet => {
       ranges.push(Decoration.mark({ class: 'cm-markdown-single-symbol' }).range(line.from, line.to));
     }
 
-    const listMarkerMatch = line.text.match(/^(\s*)[-+*]\s+/);
+    const listMarkerMatch = line.text.match(/^(\s*)(?:[-+*]|\d+[.)])\s+/);
     if (listMarkerMatch) {
       const markerFrom = line.from + listMarkerMatch[1].length;
       const markerTo = markerFrom + listMarkerMatch[0].length - listMarkerMatch[1].length;
@@ -372,7 +372,25 @@ const wrapSelection = (
   return true;
 };
 
+const isListMarkerLine = (lineText: string): boolean => {
+  return /^\s*(?:[-+*]|\d+[.)])(?:\s+|$)/.test(lineText);
+};
+
+const insertMarkdownAwareNewline = (view: EditorView): boolean => {
+  const shouldContinueList = view.state.selection.ranges.every((range) => {
+    if (!range.empty) return false;
+    return isListMarkerLine(view.state.doc.lineAt(range.from).text);
+  });
+
+  return shouldContinueList
+    ? insertNewlineContinueMarkup(view)
+    : insertNewlineAndIndent(view);
+};
+
 const createFormatKeymap = (): Extension => keymap.of([
+  { key: 'Enter', preventDefault: true, run: insertMarkdownAwareNewline },
+  { key: 'Shift-Enter', preventDefault: true, run: insertMarkdownAwareNewline },
+  { key: 'Backspace', run: deleteMarkupBackward },
   { key: 'Tab', preventDefault: true, run: indentMore },
   { key: 'Shift-Tab', preventDefault: true, run: indentLess },
   { key: 'Mod-b', preventDefault: true, run: (view) => wrapSelection(view, '**', '**', 'bold') },
@@ -446,9 +464,8 @@ const MarkdownCodeMirrorEditor = forwardRef<MarkdownCodeMirrorEditorHandle, Mark
       doc: value,
       extensions: [
         history(),
-        markdown(),
+        markdown({ addKeymap: false }),
         indentUnit.of('  '),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         EditorView.lineWrapping,
         Prec.high(markdownFormatStyleField),
         createFormatKeymap(),
