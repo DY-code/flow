@@ -47,6 +47,7 @@ interface MarkdownFoldSection {
   from: number;
   to: number;
   hiddenLineCount: number;
+  type: 'heading' | 'fold';
 }
 
 interface MarkdownFoldFieldState {
@@ -57,6 +58,8 @@ interface MarkdownFoldFieldState {
 // CodeMirror-backed Markdown editor with display-layer heading folding.
 // Fold placeholders are widgets, not document text, so hidden content is not editable.
 const MARKDOWN_HEADING_PATTERN = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+const FOLD_BLOCK_OPEN_PATTERN = /^\s*:::\s+(.+?)\s*$/;
+const FOLD_BLOCK_CLOSE_PATTERN = /^\s*:::\s*$/;
 const externalValueSync = Annotation.define<boolean>();
 const toggleMarkdownFold = StateEffect.define<string>();
 
@@ -109,9 +112,56 @@ const parseMarkdownFoldSections = (state: EditorState, scopeKey: string): Markdo
         from: firstHiddenLine.from,
         to,
         hiddenLineCount,
+        type: 'heading',
       };
     })
     .filter((section): section is MarkdownFoldSection => Boolean(section));
+};
+
+const parseFoldBlockSections = (state: EditorState, scopeKey: string): MarkdownFoldSection[] => {
+  const sections: MarkdownFoldSection[] = [];
+
+  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
+    const openLine = state.doc.line(lineNumber);
+    const openMatch = openLine.text.match(FOLD_BLOCK_OPEN_PATTERN);
+    if (!openMatch) continue;
+
+    let closeLineNumber = -1;
+    for (let candidateLineNumber = lineNumber + 1; candidateLineNumber <= state.doc.lines; candidateLineNumber += 1) {
+      const candidateLine = state.doc.line(candidateLineNumber);
+      if (FOLD_BLOCK_CLOSE_PATTERN.test(candidateLine.text)) {
+        closeLineNumber = candidateLineNumber;
+        break;
+      }
+    }
+    if (closeLineNumber === -1) continue;
+
+    const firstHiddenLineNumber = lineNumber + 1;
+    const firstHiddenLine = state.doc.line(firstHiddenLineNumber);
+    const closeLine = state.doc.line(closeLineNumber);
+    const title = stripMarkdownInline(openMatch[1] || '') || '详情';
+
+    sections.push({
+      key: `${scopeKey}:fold:${lineNumber}:${title}`,
+      title,
+      headingFrom: openLine.from,
+      from: firstHiddenLine.from,
+      to: closeLine.to,
+      hiddenLineCount: closeLineNumber - firstHiddenLineNumber + 1,
+      type: 'fold',
+    });
+
+    lineNumber = closeLineNumber;
+  }
+
+  return sections;
+};
+
+const parseAllFoldSections = (state: EditorState, scopeKey: string): MarkdownFoldSection[] => {
+  return [
+    ...parseMarkdownFoldSections(state, scopeKey),
+    ...parseFoldBlockSections(state, scopeKey),
+  ];
 };
 
 const selectionTouchesRange = (state: EditorState, from: number, to: number): boolean => {
@@ -206,7 +256,7 @@ const buildFoldDecorations = (
   scopeKey: string
 ): DecorationSet => {
   const ranges: Range<Decoration>[] = [];
-  const sections = parseMarkdownFoldSections(state, scopeKey);
+  const sections = parseAllFoldSections(state, scopeKey);
 
   sections.forEach((section) => {
     const collapsed = collapsedKeys.has(section.key);
@@ -309,7 +359,7 @@ const markdownFoldExtensions = (scopeKey: string): Extension => {
     const currentFoldState = transaction.startState.field(foldField, false);
     if (!currentFoldState || currentFoldState.collapsedKeys.size === 0) return transaction;
 
-    const collapsedSections = parseMarkdownFoldSections(transaction.startState, scopeKey)
+    const collapsedSections = parseAllFoldSections(transaction.startState, scopeKey)
       .filter((section) => currentFoldState.collapsedKeys.has(section.key));
     if (collapsedSections.length === 0) return transaction;
 
@@ -372,6 +422,25 @@ const wrapSelection = (
   return true;
 };
 
+const insertDetailsBlock = (view: EditorView): boolean => {
+  if (view.state.readOnly) return true;
+  const selection = view.state.selection.main;
+  const selected = view.state.sliceDoc(selection.from, selection.to);
+  const title = selected ? '详情' : '标题';
+  const body = selected || '内容';
+  const block = `::: ${title}\n${body}\n:::`;
+  const titleFrom = selection.from + '::: '.length;
+
+  view.dispatch({
+    changes: { from: selection.from, to: selection.to, insert: block },
+    selection: selected
+      ? EditorSelection.cursor(selection.from + block.length)
+      : EditorSelection.range(titleFrom, titleFrom + title.length),
+    scrollIntoView: true,
+  });
+  return true;
+};
+
 const isListMarkerLine = (lineText: string): boolean => {
   return /^\s*(?:[-+*]|\d+[.)])(?:\s+|$)/.test(lineText);
 };
@@ -397,6 +466,7 @@ const createFormatKeymap = (): Extension => keymap.of([
   { key: 'Mod-i', preventDefault: true, run: (view) => wrapSelection(view, '*', '*', 'italic') },
   { key: 'Mod-u', preventDefault: true, run: (view) => wrapSelection(view, '<u>', '</u>', 'underline') },
   { key: 'Mod-Shift-x', preventDefault: true, run: (view) => wrapSelection(view, '~~', '~~', 'strike') },
+  { key: 'Mod-Shift-d', preventDefault: true, run: insertDetailsBlock },
   {
     key: 'Mod-k',
     preventDefault: true,

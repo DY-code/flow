@@ -16,6 +16,8 @@ interface PreviewHeadingItem {
 
 const PREVIEW_HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6';
 const MARKDOWN_HEADING_PATTERN = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+const FOLD_BLOCK_OPEN_PATTERN = /^(\s*):::\s+(.+?)\s*$/;
+const FOLD_BLOCK_CLOSE_PATTERN = /^\s*:::\s*$/;
 
 const getHeadingLevel = (element: Element): number => {
   const level = Number(element.tagName.slice(1));
@@ -50,6 +52,41 @@ const parsePreviewHeadings = (markdown: string): PreviewHeadingItem[] => {
   }
 
   return items;
+};
+
+const renderFoldBlocksForPreview = (markdown: string): string => {
+  const lines = markdown.split('\n');
+  const renderedLines: string[] = [];
+  const foldStack: string[] = [];
+
+  lines.forEach((line) => {
+    const openMatch = line.match(FOLD_BLOCK_OPEN_PATTERN);
+    if (openMatch) {
+      const title = (openMatch[2] || '详情').trim() || '详情';
+      foldStack.push(openMatch[1] || '');
+      renderedLines.push('<details>');
+      renderedLines.push(`<summary>${title}</summary>`);
+      renderedLines.push('');
+      return;
+    }
+
+    if (foldStack.length > 0 && FOLD_BLOCK_CLOSE_PATTERN.test(line)) {
+      foldStack.pop();
+      renderedLines.push('');
+      renderedLines.push('</details>');
+      return;
+    }
+
+    renderedLines.push(line);
+  });
+
+  while (foldStack.length > 0) {
+    foldStack.pop();
+    renderedLines.push('');
+    renderedLines.push('</details>');
+  }
+
+  return renderedLines.join('\n');
 };
 
 interface EditorProps {
@@ -475,6 +512,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
   const editorRootRef = useRef<HTMLDivElement>(null);
   const isPointerInsideRef = useRef(false);
   const previewMarkdown = isRoot ? rootDisplayContent : body;
+  const renderedPreviewMarkdown = useMemo(() => renderFoldBlocksForPreview(previewMarkdown), [previewMarkdown]);
 
   const previewHeadings = useMemo(() => {
     const all = parsePreviewHeadings(previewMarkdown);
@@ -706,7 +744,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
                             className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert"
                             onDoubleClick={handlePreviewDoubleClick}
                         >
-                            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{rootDisplayContent || '*No content*'}</Markdown>
+                            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{renderedPreviewMarkdown || '*No content*'}</Markdown>
                         </article>
                     </div>
                 </div>
@@ -826,7 +864,7 @@ const ResearchEditor: React.FC<EditorProps> = ({ nodeId, isRoot = false, textRea
                             className="markdown-preview prose prose-sm sm:prose-base max-w-none dark:prose-invert"
                             onDoubleClick={handlePreviewDoubleClick}
                         >
-                            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{body || '*No content*'}</Markdown>
+                            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{renderedPreviewMarkdown || '*No content*'}</Markdown>
                         </article>
                     </div>
                 ) : (
